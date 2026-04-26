@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Workers{% endblock %}
+{% block page_title %}Workers{% endblock %}
+{% block actions %}<button class="btn btn-primary" onclick="showAddWorker()" id="btn-add-worker">+ Add Worker</button>{% endblock %}
+
+{% block content %}
+<div class="info-banner">
+    <strong>💡 To connect a remote PC:</strong> Run on the remote machine:<br>
+    <code>python scripts/worker_agent.py --server http://THIS_SERVER:8000 --name my-gpu-pc</code>
+</div>
+
+<div id="workers-list" class="workers-grid">
+    <p class="empty-state">Loading...</p>
+</div>
+
+<div class="modal-overlay" id="worker-modal" style="display:none">
+    <div class="modal modal-sm">
+        <h3>Add Worker Manually</h3>
+        <form id="worker-form" onsubmit="saveWorker(event)">
+            <div class="form-group"><label>Name *</label><input type="text" id="w-name" required></div>
+            <div class="form-group"><label>Host (IP) *</label><input type="text" id="w-host" required></div>
+            <div class="form-group"><label>Port</label><input type="number" id="w-port" value="11434"></div>
+            <div class="form-group"><label>API Type</label><select id="w-api_type"><option>ollama</option><option>openai</option></select></div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeWorkerModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadWorkers() {
+    try {
+        const workers = await api('/api/workers');
+        const el = document.getElementById('workers-list');
+        
+        if (workers.length === 0) {
+            el.innerHTML = '<p class="empty-state">No workers registered. Use the worker agent or add manually.</p>';
+            return;
+        }
+        
+        el.innerHTML = workers.map(w => `
+            <div class="worker-card-lg ${w.is_online ? 'online' : 'offline'}">
+                <div class="worker-card-header">
+                    <div>
+                        <span class="status-dot ${w.is_online ? 'dot-online' : 'dot-offline'}"></span>
+                        <strong>${escapeHtml(w.name)}</strong>
+                        <span class="badge badge-${w.is_online ? 'posted' : 'failed'}">${w.is_online ? 'ONLINE' : 'OFFLINE'}</span>
+                    </div>
+                    <button class="btn btn-sm btn-danger" onclick="deleteWorker(${w.id})">✕</button>
+                </div>
+                <div class="worker-info">
+                    <span>📍 ${w.host}:${w.port}</span>
+                    <span>🔌 ${w.api_type}</span>
+                    ${w.gpu_name ? `<span>🎮 ${w.gpu_name}</span>` : ''}
+                    ${w.last_heartbeat ? `<span>♥ ${formatTime(w.last_heartbeat)}</span>` : ''}
+                </div>
+                
+                ${w.vram_total_mb ? `
+                <div class="resource-section">
+                    <div class="resource-bar-lg">
+                        <div class="bar-header"><span>🎮 VRAM</span><span>${w.vram_used_mb || 0} / ${w.vram_total_mb} MB (${percent(w.vram_used_mb, w.vram_total_mb)}%)</span></div>
+                        <div class="bar bar-lg"><div class="bar-fill ${getBarColor(w.vram_used_mb, w.vram_total_mb)}" style="width: ${percent(w.vram_used_mb, w.vram_total_mb)}%"></div></div>
+                    </div>
+                </div>` : ''}
+                
+                ${w.ram_total_mb ? `
+                <div class="resource-section">
+                    <div class="resource-bar-lg">
+                        <div class="bar-header"><span>💾 RAM</span><span>${w.ram_used_mb || 0} / ${w.ram_total_mb} MB (${percent(w.ram_used_mb, w.ram_total_mb)}%)</span></div>
+                        <div class="bar bar-lg"><div class="bar-fill ${getBarColor(w.ram_used_mb, w.ram_total_mb)}" style="width: ${percent(w.ram_used_mb, w.ram_total_mb)}%"></div></div>
+                    </div>
+                </div>` : ''}
+                
+                ${w.cpu_percent !== null && w.cpu_percent !== undefined ? `
+                <div class="resource-section">
+                    <div class="resource-bar-lg">
+                        <div class="bar-header"><span>⚡ CPU</span><span>${w.cpu_percent}%</span></div>
+                        <div class="bar bar-lg"><div class="bar-fill ${w.cpu_percent > 80 ? 'bar-red' : w.cpu_percent > 50 ? 'bar-yellow' : 'bar-green'}" style="width: ${w.cpu_percent}%"></div></div>
+                    </div>
+                </div>` : ''}
+                
+                <div class="worker-models-section">
+                    <strong>Models:</strong>
+                    ${(w.models_available || []).length > 0
+                        ? (w.models_available || []).map(m => `<span class="tag tag-model">${m}</span>`).join('')
+                        : '<em>none loaded</em>'
+                    }
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function showAddWorker() {
+    document.getElementById('worker-modal').style.display = 'flex';
+}
+function closeWorkerModal() {
+    document.getElementById('worker-modal').style.display = 'none';
+}
+
+async function saveWorker(e) {
+    e.preventDefault();
+    await api('/api/workers', 'POST', {
+        name: document.getElementById('w-name').value,
+        host: document.getElementById('w-host').value,
+        port: parseInt(document.getElementById('w-port').value),
+        api_type: document.getElementById('w-api_type').value
+    });
+    closeWorkerModal();
+    loadWorkers();
+}
+
+async function deleteWorker(id) {
+    if (!confirm('Remove this worker?')) return;
+    await api(`/api/workers/${id}`, 'DELETE');
+    loadWorkers();
+}
+
+loadWorkers();
+setInterval(loadWorkers, 15000);
+</script>
+{% endblock %}

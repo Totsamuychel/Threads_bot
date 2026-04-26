@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="grid grid-4">
+    <div class="card stat-card">
+        <div class="stat-icon">👤</div>
+        <div class="stat-value" id="stat-accounts">—</div>
+        <div class="stat-label">Accounts</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-icon">🖥️</div>
+        <div class="stat-value" id="stat-workers">—</div>
+        <div class="stat-label">Workers Online</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-icon">✅</div>
+        <div class="stat-value" id="stat-posted">—</div>
+        <div class="stat-label">Posts Published</div>
+    </div>
+    <div class="card stat-card">
+        <div class="stat-icon">❌</div>
+        <div class="stat-value" id="stat-failed">—</div>
+        <div class="stat-label">Failed</div>
+    </div>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3>📅 Upcoming Posts</h3>
+        <div id="upcoming-posts" class="table-container">
+            <p class="empty-state">Loading...</p>
+        </div>
+    </div>
+    <div class="card">
+        <h3>🖥️ Workers Status</h3>
+        <div id="workers-status" class="workers-grid">
+            <p class="empty-state">Loading...</p>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>📋 Recent Activity</h3>
+    <div id="recent-activity" class="table-container">
+        <p class="empty-state">Loading...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadDashboard() {
+    try {
+        const [stats, upcoming, workers, recent] = await Promise.all([
+            api('/api/dashboard/stats?days=7'),
+            api('/api/dashboard/upcoming?hours=24'),
+            api('/api/workers'),
+            api('/api/dashboard/recent?limit=10')
+        ]);
+
+        document.getElementById('stat-accounts').textContent = '—';
+        document.getElementById('stat-workers').textContent = workers.filter(w => w.is_online).length + '/' + workers.length;
+        document.getElementById('stat-posted').textContent = stats.posts?.posted ?? 0;
+        document.getElementById('stat-failed').textContent = stats.posts?.failed ?? 0;
+
+        // Upcoming posts
+        const upEl = document.getElementById('upcoming-posts');
+        if (upcoming.posts && upcoming.posts.length > 0) {
+            upEl.innerHTML = '<table><thead><tr><th>Time</th><th>Account</th><th>Preview</th><th>Status</th></tr></thead><tbody>' +
+                upcoming.posts.map(p => `<tr><td>${formatTime(p.scheduled_time)}</td><td>#${p.account_id}</td><td>${escapeHtml(p.text)}</td><td><span class="badge badge-${p.status}">${p.status}</span></td></tr>`).join('') +
+                '</tbody></table>';
+        } else {
+            upEl.innerHTML = '<p class="empty-state">No upcoming posts</p>';
+        }
+
+        // Workers
+        const wEl = document.getElementById('workers-status');
+        if (workers.length > 0) {
+            wEl.innerHTML = workers.map(w => `
+                <div class="worker-card ${w.is_online ? 'online' : 'offline'}">
+                    <div class="worker-header">
+                        <span class="status-dot ${w.is_online ? 'dot-online' : 'dot-offline'}"></span>
+                        <strong>${escapeHtml(w.name)}</strong>
+                    </div>
+                    <div class="worker-gpu">${w.gpu_name || 'No GPU'}</div>
+                    ${w.vram_total_mb ? `
+                    <div class="resource-bar">
+                        <label>VRAM</label>
+                        <div class="bar"><div class="bar-fill ${getBarColor(w.vram_used_mb, w.vram_total_mb)}" style="width: ${percent(w.vram_used_mb, w.vram_total_mb)}%"></div></div>
+                        <span>${w.vram_used_mb}/${w.vram_total_mb} MB</span>
+                    </div>` : ''}
+                    ${w.ram_total_mb ? `
+                    <div class="resource-bar">
+                        <label>RAM</label>
+                        <div class="bar"><div class="bar-fill ${getBarColor(w.ram_used_mb, w.ram_total_mb)}" style="width: ${percent(w.ram_used_mb, w.ram_total_mb)}%"></div></div>
+                        <span>${w.ram_used_mb}/${w.ram_total_mb} MB</span>
+                    </div>` : ''}
+                    <div class="worker-models">${(w.models_available || []).map(m => `<span class="tag">${m}</span>`).join('')}</div>
+                </div>
+            `).join('');
+        } else {
+            wEl.innerHTML = '<p class="empty-state">No workers registered</p>';
+        }
+
+        // Recent
+        const rEl = document.getElementById('recent-activity');
+        if (recent.logs && recent.logs.length > 0) {
+            rEl.innerHTML = '<table><thead><tr><th>Time</th><th>Type</th><th>Message</th></tr></thead><tbody>' +
+                recent.logs.map(l => `<tr><td>${formatTime(l.created_at)}</td><td><span class="badge badge-${l.event_category}">${l.event_type}</span></td><td>${escapeHtml(l.message)}</td></tr>`).join('') +
+                '</tbody></table>';
+        } else {
+            rEl.innerHTML = '<p class="empty-state">No recent activity</p>';
+        }
+
+        // Load account count
+        const accounts = await api('/api/accounts');
+        document.getElementById('stat-accounts').textContent = accounts.length;
+    } catch (e) {
+        console.error('Dashboard error:', e);
+    }
+}
+
+loadDashboard();
+setInterval(loadDashboard, 30000);
+</script>
+{% endblock %}

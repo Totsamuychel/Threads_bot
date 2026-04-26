@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://threads:threads@db:5432/threads_automation
+      - LLM_PROVIDER=ollama
+      - LLM_BASE_URL=http://host.docker.internal:11434
+      - THREADS_PUBLISHER=mock
+      - SCHEDULER_ENABLED=true
+    depends_on:
+      - db
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=threads
+      - POSTGRES_PASSWORD=threads
+      - POSTGRES_DB=threads_automation
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Posts{% endblock %}
+{% block page_title %}Posts{% endblock %}
+
+{% block content %}
+<div class="filters">
+    <select id="filter-status" onchange="loadPosts()">
+        <option value="">All Statuses</option>
+        <option value="planned">Planned</option>
+        <option value="generated">Generated</option>
+        <option value="posted">Posted</option>
+        <option value="failed">Failed</option>
+    </select>
+</div>
+
+<div id="posts-list" class="table-container">
+    <p class="empty-state">Loading...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadPosts() {
+    const status = document.getElementById('filter-status').value;
+    let url = '/api/content/posts?limit=50';
+    if (status) url += '&status=' + status;
+    
+    try {
+        const posts = await api(url);
+        const el = document.getElementById('posts-list');
+        
+        if (posts.length === 0) {
+            el.innerHTML = '<p class="empty-state">No posts found</p>';
+            return;
+        }
+        
+        el.innerHTML = `<table>
+            <thead><tr><th>ID</th><th>Account</th><th>Text Preview</th><th>Status</th><th>Scheduled</th><th>Published</th><th>Actions</th></tr></thead>
+            <tbody>${posts.map(p => `<tr>
+                <td>#${p.id}</td>
+                <td>#${p.account_id}</td>
+                <td class="text-preview">${escapeHtml((p.text || '').substring(0, 120))}${p.text && p.text.length > 120 ? '...' : ''}</td>
+                <td><span class="badge badge-${p.status}">${p.status}</span></td>
+                <td>${p.scheduled_time ? formatTime(p.scheduled_time) : '—'}</td>
+                <td>${p.published_at ? formatTime(p.published_at) : '—'}</td>
+                <td class="actions">
+                    ${p.status === 'generated' ? `<button class="btn btn-sm btn-primary" onclick="publishPost(${p.id})">Publish</button>` : ''}
+                    ${p.status === 'failed' ? `<button class="btn btn-sm" onclick="retryPost(${p.id})">Retry</button>` : ''}
+                    <button class="btn btn-sm btn-danger" onclick="deletePost(${p.id})">Del</button>
+                </td>
+            </tr>`).join('')}</tbody></table>`;
+    } catch (e) { console.error(e); }
+}
+
+async function publishPost(id) {
+    await api(`/api/content/publish/${id}`, 'POST');
+    loadPosts();
+}
+async function retryPost(id) {
+    await api(`/api/content/retry/${id}`, 'POST');
+    loadPosts();
+}
+async function deletePost(id) {
+    if (!confirm('Delete this post?')) return;
+    await api(`/api/content/posts/${id}`, 'DELETE');
+    loadPosts();
+}
+
+loadPosts();
+</script>
+{% endblock %}

@@ -1,0 +1,476 @@
+# System Flow Diagrams
+
+Visual representation of how the Threads Automation system works.
+
+## 🔄 Complete System Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         USER / API CLIENT                        │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         FASTAPI SERVER                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Accounts   │  │   Content    │  │  Dashboard   │         │
+│  │     API      │  │     API      │  │     API      │         │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘         │
+└─────────┼──────────────────┼──────────────────┼─────────────────┘
+          │                  │                  │
+          └──────────────────┼──────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       SERVICE LAYER                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Content    │  │     Post     │  │     Post     │         │
+│  │   Planner    │  │  Generator   │  │  Publisher   │         │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘         │
+└─────────┼──────────────────┼──────────────────┼─────────────────┘
+          │                  │                  │
+          │                  ▼                  ▼
+          │         ┌──────────────┐  ┌──────────────┐
+          │         │  LLM Client  │  │  Publisher   │
+          │         │   (Ollama/   │  │   (Mock/     │
+          │         │   OpenAI)    │  │    API)      │
+          │         └──────────────┘  └──────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         DATABASE                                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐       │
+│  │ Accounts │  │ Content  │  │  Posts   │  │ Activity │       │
+│  │          │  │  Plans   │  │          │  │   Logs   │       │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘       │
+└─────────────────────────────────────────────────────────────────┘
+          ▲
+          │
+          │ (Scheduled Tasks)
+          │
+┌─────────┴───────────────────────────────────────────────────────┐
+│                         SCHEDULER                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │   Generate   │  │   Generate   │  │   Publish    │         │
+│  │    Plans     │  │    Posts     │  │    Posts     │         │
+│  │  (Daily 1AM) │  │   (Hourly)   │  │  (Every min) │         │
+│  └──────────────┘  └──────────────┘  └──────────────┘         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 📝 Content Generation Flow
+
+```
+START
+  │
+  ▼
+┌─────────────────────┐
+│ Scheduler Triggers  │
+│ Content Planning    │
+│   (Daily 1 AM)      │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ ContentPlanner      │
+│ - Get active        │
+│   accounts          │
+│ - Check existing    │
+│   plans             │
+│ - Generate new      │
+│   plans for N days  │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Create ContentPlan  │
+│ Records in DB       │
+│ - Topic             │
+│ - Scheduled time    │
+│ - Status: PLANNED   │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Wait for scheduled  │
+│ time (N hours       │
+│ before posting)     │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Scheduler Triggers  │
+│ Post Generation     │
+│   (Hourly check)    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ PostGenerator       │
+│ - Get ContentPlan   │
+│ - Get Account       │
+│ - Build prompts     │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Call LLM            │
+│ - System prompt     │
+│ - User prompt       │
+│ - Generate text     │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Parse LLM Response  │
+│ - Extract text      │
+│ - Extract hashtags  │
+│ - Add base hashtags │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Create Post Record  │
+│ - Text              │
+│ - Hashtags          │
+│ - Status: GENERATED │
+│ - Metadata          │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Update ContentPlan  │
+│ Status: GENERATED   │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Wait for scheduled  │
+│ posting time        │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Scheduler Triggers  │
+│ Publishing          │
+│ (Every minute)      │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ PostPublisher       │
+│ - Get Post          │
+│ - Format text       │
+│ - Add hashtags      │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Call Publisher      │
+│ (Mock/API/Browser)  │
+└──────────┬──────────┘
+           │
+           ▼
+      ┌────┴────┐
+      │ Success?│
+      └────┬────┘
+           │
+    ┌──────┴──────┐
+    │             │
+    ▼             ▼
+┌────────┐   ┌────────┐
+│  YES   │   │   NO   │
+└───┬────┘   └───┬────┘
+    │            │
+    ▼            ▼
+┌────────┐   ┌────────┐
+│ Update │   │ Update │
+│ Status:│   │ Status:│
+│ POSTED │   │ FAILED │
+└───┬────┘   └───┬────┘
+    │            │
+    ▼            ▼
+┌────────┐   ┌────────┐
+│  Log   │   │  Log   │
+│Success │   │ Error  │
+└───┬────┘   └───┬────┘
+    │            │
+    │            ▼
+    │        ┌────────┐
+    │        │ Retry  │
+    │        │ Later  │
+    │        │(5 min) │
+    │        └────────┘
+    │
+    ▼
+  END
+```
+
+## 🔁 Retry Logic Flow
+
+```
+┌─────────────────────┐
+│ Post Publishing     │
+│ Failed              │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Update Post         │
+│ - Status: FAILED    │
+│ - Increment retry   │
+│ - Store error       │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Wait for retry      │
+│ interval            │
+│ (exponential        │
+│  backoff)           │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Scheduler Triggers  │
+│ Retry Task          │
+│ (Every 5 minutes)   │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Check retry count   │
+│ < max_retries?      │
+└──────────┬──────────┘
+           │
+    ┌──────┴──────┐
+    │             │
+    ▼             ▼
+┌────────┐   ┌────────┐
+│  YES   │   │   NO   │
+└───┬────┘   └───┬────┘
+    │            │
+    ▼            ▼
+┌────────┐   ┌────────┐
+│Calculate│  │  Give  │
+│ delay   │  │   Up   │
+│ based on│  │        │
+│ retry # │  └────────┘
+└───┬────┘
+    │
+    ▼
+┌────────┐
+│ Enough │
+│  time  │
+│passed? │
+└───┬────┘
+    │
+┌───┴───┐
+│  YES  │
+└───┬───┘
+    │
+    ▼
+┌────────┐
+│ Retry  │
+│Publish │
+└────────┘
+```
+
+## 🎯 API Request Flow
+
+```
+┌─────────────────────┐
+│ HTTP Request        │
+│ POST /api/content/  │
+│      generate/1     │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ FastAPI Router      │
+│ - Route matching    │
+│ - Auth check        │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Pydantic Validation │
+│ - Request params    │
+│ - Type checking     │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Get DB Session      │
+│ (Dependency         │
+│  Injection)         │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Service Layer       │
+│ PostGenerator       │
+│ .generate_post()    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Business Logic      │
+│ - Fetch data        │
+│ - Call LLM          │
+│ - Save result       │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Database Operations │
+│ - SQLAlchemy ORM    │
+│ - Transactions      │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Format Response     │
+│ - Pydantic schema   │
+│ - JSON serialization│
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ HTTP Response       │
+│ 200 OK + JSON       │
+└─────────────────────┘
+```
+
+## 🔐 Authentication Flow (Future)
+
+```
+┌─────────────────────┐
+│ Client Request      │
+│ + JWT Token         │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Auth Middleware     │
+│ - Extract token     │
+│ - Verify signature  │
+└──────────┬──────────┘
+           │
+    ┌──────┴──────┐
+    │   Valid?    │
+    └──────┬──────┘
+           │
+    ┌──────┴──────┐
+    │             │
+    ▼             ▼
+┌────────┐   ┌────────┐
+│  YES   │   │   NO   │
+└───┬────┘   └───┬────┘
+    │            │
+    ▼            ▼
+┌────────┐   ┌────────┐
+│Extract │   │ Return │
+│ User   │   │  401   │
+│  Info  │   │Unauth  │
+└───┬────┘   └────────┘
+    │
+    ▼
+┌────────┐
+│Process │
+│Request │
+└────────┘
+```
+
+## 📊 Data Lifecycle
+
+```
+Account Created
+    │
+    ▼
+Content Plans Generated (Daily)
+    │
+    ├─► Plan 1 (Topic A, 9 AM)
+    ├─► Plan 2 (Topic B, 2 PM)
+    └─► Plan 3 (Topic C, 6 PM)
+         │
+         ▼
+Posts Generated (Hours before)
+    │
+    ├─► Post 1 (Generated, 7 AM)
+    ├─► Post 2 (Generated, 12 PM)
+    └─► Post 3 (Generated, 4 PM)
+         │
+         ▼
+Posts Published (At scheduled time)
+    │
+    ├─► Post 1 (Posted, 9 AM) ✓
+    ├─► Post 2 (Posted, 2 PM) ✓
+    └─► Post 3 (Failed, 6 PM) ✗
+         │
+         ▼
+Failed Posts Retried
+    │
+    └─► Post 3 (Retry 1, 6:05 PM)
+         │
+         ├─► Success → Posted ✓
+         └─► Failed → Retry 2 (6:15 PM)
+              │
+              └─► Max retries → Give up
+```
+
+## 🔄 Scheduler Timeline
+
+```
+Time    │ Task
+────────┼─────────────────────────────────────
+00:00   │
+01:00   │ ► Generate Content Plans (Daily)
+02:00   │
+03:00   │ ► Cleanup Old Logs (Daily)
+04:00   │
+05:00   │ ► Generate Posts (Hourly)
+06:00   │ ► Generate Posts (Hourly)
+07:00   │ ► Generate Posts (Hourly)
+08:00   │ ► Generate Posts (Hourly)
+09:00   │ ► Generate Posts (Hourly)
+        │ ► Publish Posts (Every minute)
+10:00   │ ► Generate Posts (Hourly)
+11:00   │ ► Generate Posts (Hourly)
+12:00   │ ► Generate Posts (Hourly)
+        │
+Every   │ ► Publish Posts (Every minute)
+minute  │ ► Retry Failed Posts (Every 5 min)
+```
+
+## 🎨 Component Interaction
+
+```
+┌──────────────────────────────────────────────────────┐
+│                    API Layer                          │
+│  ┌────────┐  ┌────────┐  ┌────────┐                 │
+│  │Accounts│  │Content │  │Dashboard│                 │
+│  └───┬────┘  └───┬────┘  └───┬────┘                 │
+└──────┼───────────┼───────────┼───────────────────────┘
+       │           │           │
+       └───────────┼───────────┘
+                   │
+┌──────────────────┼───────────────────────────────────┐
+│                  │        Service Layer               │
+│  ┌───────────────▼───────────────┐                   │
+│  │     Business Logic Services    │                   │
+│  │  ┌────────┐  ┌────────┐       │                   │
+│  │  │Planner │  │Generator│       │                   │
+│  │  └───┬────┘  └───┬────┘       │                   │
+│  └──────┼───────────┼─────────────┘                   │
+└─────────┼───────────┼──────────────────────────────────┘
+          │           │
+    ┌─────┴─────┐     └──────┐
+    │           │            │
+┌───▼────┐  ┌───▼────┐  ┌───▼────┐
+│Database│  │  LLM   │  │Publisher│
+│        │  │ Client │  │        │
+└────────┘  └────────┘  └────────┘
+```
+
+These diagrams show how all the pieces fit together to create a complete, automated content generation and publishing system!

@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Accounts{% endblock %}
+{% block page_title %}Accounts{% endblock %}
+{% block actions %}<button class="btn btn-primary" onclick="showCreateModal()" id="btn-new-account">+ New Account</button>{% endblock %}
+
+{% block content %}
+<div id="accounts-list" class="table-container">
+    <p class="empty-state">Loading...</p>
+</div>
+
+<!-- Create/Edit Modal -->
+<div class="modal-overlay" id="account-modal" style="display:none">
+    <div class="modal">
+        <h3 id="modal-title">New Account</h3>
+        <form id="account-form" onsubmit="saveAccount(event)">
+            <input type="hidden" id="f-id">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Username *</label>
+                    <input type="text" id="f-username" required>
+                </div>
+                <div class="form-group">
+                    <label>Display Name</label>
+                    <input type="text" id="f-display_name">
+                </div>
+                <div class="form-group">
+                    <label>Language</label>
+                    <input type="text" id="f-language" value="en">
+                </div>
+                <div class="form-group">
+                    <label>Timezone</label>
+                    <input type="text" id="f-timezone" value="UTC">
+                </div>
+                <div class="form-group full-width">
+                    <label>Topics (comma-separated)</label>
+                    <input type="text" id="f-topics" placeholder="AI, coding, tech news">
+                </div>
+                <div class="form-group full-width">
+                    <label>Tone</label>
+                    <input type="text" id="f-tone" placeholder="casual, witty, educational">
+                </div>
+                <div class="form-group full-width">
+                    <label>Target Audience</label>
+                    <input type="text" id="f-target_audience" placeholder="developers and tech enthusiasts">
+                </div>
+                <div class="form-group">
+                    <label>LLM Model Override</label>
+                    <select id="f-llm_model"><option value="">Default</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Worker</label>
+                    <select id="f-llm_worker_id"><option value="">Auto (default)</option></select>
+                </div>
+                <div class="form-group">
+                    <label>Post Schedule (times, comma)</label>
+                    <input type="text" id="f-schedule" value="09:00,14:00,18:00">
+                </div>
+                <div class="form-group">
+                    <label>Max Posts/Day</label>
+                    <input type="number" id="f-max_posts" value="3" min="1" max="20">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingId = null;
+
+async function loadAccounts() {
+    try {
+        const [accounts, workers] = await Promise.all([api('/api/accounts'), api('/api/workers')]);
+        const el = document.getElementById('accounts-list');
+        
+        // Populate worker dropdown
+        const wSelect = document.getElementById('f-llm_worker_id');
+        wSelect.innerHTML = '<option value="">Auto (default)</option>' +
+            workers.map(w => `<option value="${w.id}">${w.name} (${w.host})</option>`).join('');
+        
+        // Populate model dropdown from all workers
+        const allModels = [...new Set(workers.flatMap(w => w.models_available || []))];
+        const mSelect = document.getElementById('f-llm_model');
+        mSelect.innerHTML = '<option value="">Default</option>' +
+            allModels.map(m => `<option value="${m}">${m}</option>`).join('');
+        
+        if (accounts.length === 0) {
+            el.innerHTML = '<p class="empty-state">No accounts yet. Click "New Account" to create one.</p>';
+            return;
+        }
+        
+        el.innerHTML = `<table>
+            <thead><tr><th>Username</th><th>Topics</th><th>Model</th><th>Worker</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>${accounts.map(a => {
+                const w = workers.find(w => w.id === a.llm_worker_id);
+                return `<tr>
+                    <td><strong>${escapeHtml(a.username)}</strong><br><small>${a.display_name || ''}</small></td>
+                    <td>${(a.topics || []).map(t => `<span class="tag">${t}</span>`).join('')}</td>
+                    <td>${a.llm_model || '<em>default</em>'}</td>
+                    <td>${w ? w.name : '<em>auto</em>'}</td>
+                    <td><span class="badge ${a.is_active ? 'badge-posted' : 'badge-failed'}">${a.is_active ? 'active' : 'inactive'}</span></td>
+                    <td class="actions">
+                        <button class="btn btn-sm" onclick="editAccount(${a.id})">Edit</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">Delete</button>
+                    </td>
+                </tr>`;
+            }).join('')}</tbody></table>`;
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function showCreateModal() {
+    editingId = null;
+    document.getElementById('modal-title').textContent = 'New Account';
+    document.getElementById('account-form').reset();
+    document.getElementById('f-language').value = 'en';
+    document.getElementById('f-timezone').value = 'UTC';
+    document.getElementById('f-schedule').value = '09:00,14:00,18:00';
+    document.getElementById('f-max_posts').value = '3';
+    document.getElementById('account-modal').style.display = 'flex';
+}
+
+async function editAccount(id) {
+    const a = await api(`/api/accounts/${id}`);
+    editingId = id;
+    document.getElementById('modal-title').textContent = 'Edit Account';
+    document.getElementById('f-id').value = id;
+    document.getElementById('f-username').value = a.username;
+    document.getElementById('f-display_name').value = a.display_name || '';
+    document.getElementById('f-language').value = a.language || 'en';
+    document.getElementById('f-timezone').value = a.timezone || 'UTC';
+    document.getElementById('f-topics').value = (a.topics || []).join(', ');
+    document.getElementById('f-tone').value = a.tone || '';
+    document.getElementById('f-target_audience').value = a.target_audience || '';
+    document.getElementById('f-llm_model').value = a.llm_model || '';
+    document.getElementById('f-llm_worker_id').value = a.llm_worker_id || '';
+    document.getElementById('f-schedule').value = (a.schedule_config?.times || []).join(',');
+    document.getElementById('f-max_posts').value = a.max_posts_per_day || 3;
+    document.getElementById('account-modal').style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('account-modal').style.display = 'none';
+}
+
+async function saveAccount(e) {
+    e.preventDefault();
+    const topics = document.getElementById('f-topics').value.split(',').map(t => t.trim()).filter(Boolean);
+    const times = document.getElementById('f-schedule').value.split(',').map(t => t.trim()).filter(Boolean);
+    const workerId = document.getElementById('f-llm_worker_id').value;
+    const llmModel = document.getElementById('f-llm_model').value;
+    
+    const data = {
+        username: document.getElementById('f-username').value,
+        display_name: document.getElementById('f-display_name').value || null,
+        language: document.getElementById('f-language').value,
+        timezone: document.getElementById('f-timezone').value,
+        topics: topics,
+        tone: document.getElementById('f-tone').value || null,
+        target_audience: document.getElementById('f-target_audience').value || null,
+        schedule_type: 'times',
+        schedule_config: { times: times },
+        max_posts_per_day: parseInt(document.getElementById('f-max_posts').value),
+        llm_model: llmModel || null,
+        llm_worker_id: workerId ? parseInt(workerId) : null,
+    };
+    
+    try {
+        if (editingId) {
+            await api(`/api/accounts/${editingId}`, 'PUT', data);
+        } else {
+            await api('/api/accounts', 'POST', data);
+        }
+        closeModal();
+        loadAccounts();
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function deleteAccount(id) {
+    if (!confirm('Delete this account and all its posts?')) return;
+    await api(`/api/accounts/${id}`, 'DELETE');
+    loadAccounts();
+}
+
+loadAccounts();
+</script>
+{% endblock %}

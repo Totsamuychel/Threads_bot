@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Dashboard{% endblock %} — Threads Automation</title>
+    <meta name="description" content="Threads Automation Management Dashboard">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">🧵</div>
+            <h1>Threads<span>Auto</span></h1>
+        </div>
+        <nav>
+            <a href="/" class="nav-item {% if active == 'dashboard' %}active{% endif %}" id="nav-dashboard">
+                <span class="icon">📊</span> Dashboard
+            </a>
+            <a href="/accounts" class="nav-item {% if active == 'accounts' %}active{% endif %}" id="nav-accounts">
+                <span class="icon">👤</span> Accounts
+            </a>
+            <a href="/workers" class="nav-item {% if active == 'workers' %}active{% endif %}" id="nav-workers">
+                <span class="icon">🖥️</span> Workers
+            </a>
+            <a href="/posts" class="nav-item {% if active == 'posts' %}active{% endif %}" id="nav-posts">
+                <span class="icon">📝</span> Posts
+            </a>
+            <a href="/logs" class="nav-item {% if active == 'logs' %}active{% endif %}" id="nav-logs">
+                <span class="icon">📋</span> Logs
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            <a href="/docs" class="nav-item" id="nav-api-docs">
+                <span class="icon">📚</span> API Docs
+            </a>
+        </div>
+    </aside>
+    <main class="content">
+        <header class="top-bar">
+            <h2>{% block page_title %}Dashboard{% endblock %}</h2>
+            <div class="top-bar-actions">
+                {% block actions %}{% endblock %}
+            </div>
+        </header>
+        <div class="page-content">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

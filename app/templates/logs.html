@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Activity Logs{% endblock %}
+{% block page_title %}Activity Logs{% endblock %}
+
+{% block content %}
+<div id="logs-list" class="table-container">
+    <p class="empty-state">Loading...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadLogs() {
+    try {
+        const data = await api('/api/dashboard/recent?limit=100');
+        const el = document.getElementById('logs-list');
+        
+        if (!data.logs || data.logs.length === 0) {
+            el.innerHTML = '<p class="empty-state">No activity yet</p>';
+            return;
+        }
+        
+        el.innerHTML = `<table>
+            <thead><tr><th>Time</th><th>Category</th><th>Type</th><th>Message</th><th>Error</th></tr></thead>
+            <tbody>${data.logs.map(l => `<tr class="${l.error_details ? 'row-error' : ''}">
+                <td>${formatTime(l.created_at)}</td>
+                <td><span class="badge badge-${l.event_category}">${l.event_category}</span></td>
+                <td>${l.event_type}</td>
+                <td>${escapeHtml(l.message)}</td>
+                <td class="text-error">${l.error_details ? escapeHtml(l.error_details).substring(0, 100) : '—'}</td>
+            </tr>`).join('')}</tbody></table>`;
+    } catch (e) { console.error(e); }
+}
+
+loadLogs();
+setInterval(loadLogs, 30000);
+</script>
+{% endblock %}
