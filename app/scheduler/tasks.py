@@ -106,7 +106,7 @@ async def publish_scheduled_posts():
                         Post.status.in_([PostStatus.GENERATED, PostStatus.SCHEDULED]),
                         Post.scheduled_time <= now
                     )
-                ).order_by(Post.scheduled_time)
+                ).order_by(Post.scheduled_time).limit(10)
             )
             posts = result.scalars().all()
             
