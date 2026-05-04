@@ -2,6 +2,7 @@
 
 import logging
 import json
+import re
 from typing import Optional
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -159,13 +160,16 @@ Make the post engaging, valuable, and authentic. Focus on quality over quantity.
     def _parse_llm_response(self, response_text: str, account: Account) -> dict:
         """Parse LLM response to extract post data."""
         try:
-            # Try to parse as JSON first
-            # Look for JSON in the response
-            start_idx = response_text.find("{")
-            end_idx = response_text.rfind("}") + 1
+            # Try to find JSON in markdown code blocks first
+            match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+            json_str = match.group(1) if match else response_text
+            
+            # Find the first { and last } to handle cases where LLM adds text before/after JSON
+            start_idx = json_str.find("{")
+            end_idx = json_str.rfind("}") + 1
             
             if start_idx != -1 and end_idx > start_idx:
-                json_str = response_text[start_idx:end_idx]
+                json_str = json_str[start_idx:end_idx]
                 data = json.loads(json_str)
                 
                 text = data.get("text", "")
@@ -182,8 +186,8 @@ Make the post engaging, valuable, and authentic. Focus on quality over quantity.
                     "text": text,
                     "hashtags": hashtags
                 }
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse JSON from LLM response, using raw text")
+        except Exception as e:
+            logger.warning(f"Failed to parse JSON from LLM response: {str(e)}")
         
         # Fallback: use raw text
         return {
