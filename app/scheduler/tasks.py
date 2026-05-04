@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete
 from app.database import AsyncSessionLocal
-from app.models import Account, ContentPlan, Post
+from app.models import Account, ContentPlan, Post, ActivityLog
 from app.models.content import PostStatus
 from app.services import ContentPlanner, PostGenerator, PostPublisher
 from app.config import settings
@@ -197,8 +197,6 @@ async def cleanup_old_logs():
     
     async with AsyncSessionLocal() as db:
         try:
-            from app.models import ActivityLog
-            
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=90)
             
             result = await db.execute(
