@@ -52,8 +52,8 @@ class Account(Base):
     is_active = Column(Boolean, default=True)
     
     # Timestamps
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
     
     # Relationships
     content_plans = relationship("ContentPlan", back_populates="account", cascade="all, delete-orphan")

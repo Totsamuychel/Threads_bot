@@ -32,7 +32,7 @@ class ActivityLog(Base):
     error_details = Column(Text)
     
     # Timestamp
-    created_at = Column(DateTime, default=_utcnow, index=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, index=True)
     
     # Relationships
     account = relationship("Account", back_populates="logs")

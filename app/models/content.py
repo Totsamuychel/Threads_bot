@@ -34,7 +34,7 @@ class ContentPlan(Base):
     # Planning
     topic = Column(String(200), nullable=False)
     specific_idea = Column(Text)
-    scheduled_time = Column(DateTime, nullable=False, index=True)
+    scheduled_time = Column(DateTime(timezone=True), nullable=False, index=True)
     
     # Status
     status = Column(Enum(PostStatus), default=PostStatus.PLANNED, index=True)
@@ -45,8 +45,8 @@ class ContentPlan(Base):
     llm_max_tokens = Column(Integer)
     
     # Timestamps
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
     
     # Relationships
     account = relationship("Account", back_populates="content_plans")
@@ -78,8 +78,8 @@ class Post(Base):
     generation_time_seconds = Column(Integer)
     
     # Publishing
-    scheduled_time = Column(DateTime, index=True)
-    published_at = Column(DateTime, index=True)
+    scheduled_time = Column(DateTime(timezone=True), index=True)
+    published_at = Column(DateTime(timezone=True), index=True)
     threads_post_id = Column(String(200))
     threads_post_url = Column(String(500))
     
@@ -89,8 +89,8 @@ class Post(Base):
     last_error = Column(Text)
     
     # Timestamps
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
     
     # Relationships
     account = relationship("Account", back_populates="posts")
