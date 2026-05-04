@@ -7,7 +7,11 @@ from app.config import settings
 from typing import Optional
 
 
-def get_llm_client(
+# Global client cache
+_default_llm_client: Optional[BaseLLMClient] = None
+
+
+def _create_llm_client(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
@@ -16,9 +20,7 @@ def get_llm_client(
     max_tokens: Optional[int] = None,
     timeout: Optional[int] = None
 ) -> BaseLLMClient:
-    """
-    Factory function to get appropriate LLM client.
-    """
+    """Internal factory to create a new LLM client."""
     provider = provider or settings.llm_provider
     base_url = base_url or settings.llm_base_url
     api_key = api_key or settings.llm_api_key
@@ -46,6 +48,47 @@ def get_llm_client(
         )
     else:
         raise ValueError(f"Unknown LLM provider: {provider}")
+
+
+def get_llm_client(
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    timeout: Optional[int] = None
+) -> BaseLLMClient:
+    """
+    Factory function to get appropriate LLM client.
+    Returns a singleton for default settings.
+    """
+    # Check if we should return the default singleton
+    is_default = (
+        provider is None and
+        base_url is None and
+        api_key is None and
+        model is None and
+        temperature is None and
+        max_tokens is None and
+        timeout is None
+    )
+    
+    if is_default:
+        global _default_llm_client
+        if _default_llm_client is None:
+            _default_llm_client = _create_llm_client()
+        return _default_llm_client
+    
+    return _create_llm_client(
+        provider=provider,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        timeout=timeout
+    )
 
 
 async def get_llm_client_for_account(account, db) -> BaseLLMClient:
