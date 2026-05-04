@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "Threads Automation"
     app_version: str = "1.0.0"
-    debug: bool = True
-    secret_key: str = "change-me-in-production"
+    debug: bool = False
+    secret_key: str
     
     # Database
     database_url: str = "sqlite:///./threads_automation.db"
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     
     # Admin
     admin_username: str = "admin"
-    admin_password: str = "changeme"
+    admin_password: str
     
     class Config:
         env_file = ".env"
