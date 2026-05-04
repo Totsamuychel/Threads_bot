@@ -1,6 +1,7 @@
 """Scheduled tasks for content generation and publishing."""
 
 import logging
+import asyncio
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete
@@ -29,13 +30,16 @@ async def generate_content_plans():
             
             planner = ContentPlanner(db)
             
+            # Parallelize plan generation for all accounts
+            tasks = [planner.generate_plan_for_account(account.id) for account in accounts]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
             total_created = 0
-            for account in accounts:
-                try:
-                    plans = await planner.generate_plan_for_account(account.id)
-                    total_created += len(plans)
-                except Exception as e:
-                    logger.error(f"Error generating plans for account {account.id}: {str(e)}")
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Error generating plans for account {accounts[i].id}: {str(result)}")
+                elif result:
+                    total_created += len(result)
             
             logger.info(f"Content plan generation complete. Created {total_created} plans.")
             
