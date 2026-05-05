@@ -1,6 +1,6 @@
 """Content planning and post models."""
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, JSON, ForeignKey, Enum, Float
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Enum, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 import enum

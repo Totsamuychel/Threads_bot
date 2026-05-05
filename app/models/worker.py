@@ -1,6 +1,6 @@
 """Worker node model for distributed LLM inference."""
 
-from sqlalchemy import Column, Integer, String, Boolean, Text, JSON, DateTime, Float
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.database import Base

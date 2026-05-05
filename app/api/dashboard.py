@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, and_
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 from app.database import get_db

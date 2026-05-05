@@ -5,9 +5,6 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone
 from app.publishers.base import BasePublisher, PublishResult
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.models import Account
 
 logger = logging.getLogger(__name__)
 

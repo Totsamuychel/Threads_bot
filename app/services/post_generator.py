@@ -4,13 +4,13 @@ import logging
 import json
 import re
 from typing import Optional
-from datetime import datetime
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models import Account, ContentPlan, Post
 from app.models.content import PostStatus
 from app.llm import get_llm_client
-from app.config import settings
+
 
 logger = logging.getLogger(__name__)
 
@@ -164,28 +164,22 @@ Make the post engaging, valuable, and authentic. Focus on quality over quantity.
             match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
             json_str = match.group(1) if match else response_text
             
-            # Find the first { and last } to handle cases where LLM adds text before/after JSON
-            start_idx = json_str.find("{")
-            end_idx = json_str.rfind("}") + 1
+            data = json.loads(json_str)
             
-            if start_idx != -1 and end_idx > start_idx:
-                json_str = json_str[start_idx:end_idx]
-                data = json.loads(json_str)
-                
-                text = data.get("text", "")
-                hashtags = data.get("hashtags", [])
-                
-                # Add base hashtags
-                if account.base_hashtags:
-                    hashtags.extend(account.base_hashtags)
-                
-                # Remove duplicates and limit
-                hashtags = list(dict.fromkeys(hashtags))[:account.max_hashtags or 10]
-                
-                return {
-                    "text": text,
-                    "hashtags": hashtags
-                }
+            text = data.get("text", "")
+            hashtags = data.get("hashtags", [])
+            
+            # Add base hashtags
+            if account.base_hashtags:
+                hashtags.extend(account.base_hashtags)
+            
+            # Remove duplicates and limit
+            hashtags = list(dict.fromkeys(hashtags))[:account.max_hashtags or 10]
+            
+            return {
+                "text": text,
+                "hashtags": hashtags
+            }
         except Exception as e:
             logger.warning(f"Failed to parse JSON from LLM response: {str(e)}")
         

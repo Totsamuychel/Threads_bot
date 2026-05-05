@@ -3,7 +3,6 @@
 import logging
 import asyncio
 from datetime import datetime, timedelta, timezone
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, delete
 from app.database import AsyncSessionLocal
 from app.models import Account, ContentPlan, Post, ActivityLog

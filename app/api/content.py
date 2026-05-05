@@ -2,9 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc
+from sqlalchemy import select, desc
 from typing import List, Optional
-from datetime import datetime, timedelta
 from app.database import get_db
 from app.models import ContentPlan, Post
 from app.models.content import PostStatus
