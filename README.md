@@ -2,6 +2,61 @@
 
 A production-ready system for automated Threads account management using LLM-powered content generation.
 
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    A["⏰ APScheduler\n(background tasks)"] --> B{"Task Type"}
+
+    B -- "Plan upcoming posts" --> C["🗓️ ContentPlanner\ncontent_planner.py"]
+    B -- "Generate post (~1-2h before)" --> D["🧠 PostGenerator\npost_generator.py"]
+    B -- "Publish at scheduled time" --> E["🚀 PostPublisher\npost_publisher.py"]
+
+    C --> F["📝 ContentPlan record\nstatus: planned"]
+
+    D --> G["🔌 LLM Abstraction Layer"]
+    subgraph LLM["💬 LLM Backends"]
+        G --> H["Ollama\n(local)"]
+        G --> I["OpenAI-compatible\n(cloud)"]
+        G --> J["Custom Endpoint"]
+    end
+    G --> K["📝 ContentPlan record\nstatus: generated"]
+
+    E --> L["📤 Publisher Abstraction Layer"]
+    subgraph Publishers["📡 Publisher Backends"]
+        L --> M["Mock\n(dev/testing)"]
+        L --> N["Threads API\n(official)"]
+        L --> O["Browser Automation\n(Playwright/Selenium)"]
+    end
+    L --> P["📝 ContentPlan record\nstatus: posted / failed"]
+
+    P -- "failed" --> Q["🔄 Retry\nexponential backoff"]
+    Q --> E
+
+    subgraph Storage["🗄️ Database"]
+        R["PostgreSQL\n(production)"]
+        S["SQLite\n(development)"]
+    end
+
+    C --> R
+    D --> R
+    E --> R
+
+    subgraph API["⚡ FastAPI Backend"]
+        T["/api/accounts"] 
+        U["/api/content"]
+        V["/api/dashboard"]
+    end
+
+    W["🖥️ Admin UI\n/admin"] --> API
+    API --> Storage
+    API --> A
+```
+
+---
+
 ## Architecture Overview
 
 **Tech Stack:**
