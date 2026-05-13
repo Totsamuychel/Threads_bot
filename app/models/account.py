@@ -4,6 +4,7 @@ from sqlalchemy import Column, Integer, String, Boolean, Text, JSON, DateTime, F
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.database import Base
+from app.crypto import EncryptedString
 
 
 def _utcnow():
@@ -19,8 +20,8 @@ class Account(Base):
     username = Column(String(100), unique=True, nullable=False, index=True)
     display_name = Column(String(200))
     
-    # Credentials
-    api_token = Column(String(500))
+    # Credentials (api_token is stored encrypted at rest)
+    api_token = Column(EncryptedString(700))
     credentials_env_key = Column(String(100))
     
     # Posting Configuration

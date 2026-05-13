@@ -45,26 +45,23 @@ class ContentPlanner:
         tz = pytz.timezone(account.timezone)
         now = datetime.now(tz)
         
-        # Get posting times from schedule config
-        posting_times = self._parse_schedule(account.schedule_config)
-        
-        if not posting_times:
-            logger.warning(f"No posting times configured for account {account_id}")
-            return []
-        
         # Generate plans for each day
         created_plans = []
-        
+
         for day_offset in range(days_ahead):
             target_date = now + timedelta(days=day_offset)
-            
+
+            posting_times = self._parse_schedule(account.schedule_config, target_date)
+            if not posting_times:
+                continue
+
             # Skip if we already have plans for this day
             existing_count = await self._count_plans_for_day(account_id, target_date)
-            
+
             if existing_count >= len(posting_times):
                 logger.debug(f"Plans already exist for {target_date.date()}")
                 continue
-            
+
             # Create plans for each posting time
             for time_str in posting_times:
                 # Parse time
@@ -135,16 +132,32 @@ class ContentPlanner:
         result = await self.db.execute(query)
         return list(result.scalars().all())
     
-    def _parse_schedule(self, schedule_config: dict) -> List[str]:
-        """Parse schedule configuration to get posting times."""
+    def _parse_schedule(self, schedule_config: dict, target_date: Optional[datetime] = None) -> List[str]:
+        """Parse schedule configuration to get posting times for a given date."""
         if not schedule_config:
             return []
-        
+
         if "times" in schedule_config:
             return schedule_config["times"]
-        
-        # TODO: Add CRON parsing if needed
+
+        if "cron" in schedule_config and target_date is not None:
+            return self._get_cron_times_for_date(schedule_config["cron"], target_date)
+
         return []
+
+    def _get_cron_times_for_date(self, cron_expr: str, target_date: datetime) -> List[str]:
+        """Return HH:MM strings for each time a cron expression fires on target_date."""
+        from croniter import croniter
+        local_naive = target_date.replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+        end = local_naive + timedelta(days=1)
+        cron = croniter(cron_expr, local_naive - timedelta(seconds=1))
+        times = []
+        while True:
+            next_dt = cron.get_next(datetime)
+            if next_dt >= end:
+                break
+            times.append(next_dt.strftime("%H:%M"))
+        return times
     
     async def _count_plans_for_day(self, account_id: int, target_date: datetime) -> int:
         """Count existing plans for a specific day."""

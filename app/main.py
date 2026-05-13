@@ -2,9 +2,12 @@
 
 import logging
 import os
+from collections import defaultdict
+from time import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db
@@ -52,6 +55,20 @@ app = FastAPI(
     description="Automated Threads content generation and posting system",
     lifespan=lifespan
 )
+
+# In-memory rate limiter: 120 requests/minute per IP for /api/* routes
+_rate_data: dict[str, list[float]] = defaultdict(list)
+
+@app.middleware("http")
+async def rate_limit_api(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        ip = request.client.host if request.client else "unknown"
+        now = time()
+        window = _rate_data[ip] = [t for t in _rate_data[ip] if now - t < 60]
+        if len(window) >= 120:
+            return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+        _rate_data[ip].append(now)
+    return await call_next(request)
 
 # Configure CORS
 app.add_middleware(
