@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import init_db
-from app.api import api_router
+from app.api import api_router, public_router
 from app.api.pages import router as pages_router
 from app.scheduler import init_scheduler, start_scheduler, shutdown_scheduler
 
@@ -82,10 +82,13 @@ app.add_middleware(
 # Mount static files
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# Include API routes
+# Public routes first (no auth) — OAuth callback
+app.include_router(public_router)
+
+# Protected API routes
 app.include_router(api_router)
 
-# Include page routes (must be after API routes so /api/* takes priority)
+# Page routes last
 app.include_router(pages_router)
 
 

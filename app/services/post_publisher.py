@@ -18,7 +18,7 @@ class PostPublisher:
     
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.publisher = get_publisher()
+        self.publisher = get_publisher(db=db)
     
     async def publish_post(self, post_id: int) -> bool:
         """

@@ -26,9 +26,10 @@ class Settings(BaseSettings):
     llm_timeout: int = 60
     
     # Threads Publisher
-    threads_publisher: str = "mock"  # mock, api, browser
-    threads_api_url: str = "https://api.threads.net/v1"
-    threads_api_key: Optional[str] = None
+    threads_publisher: str = "mock"  # mock, api
+    threads_app_id: Optional[str] = None
+    threads_app_secret: Optional[str] = None
+    threads_redirect_uri: str = "http://localhost:8000/api/accounts/oauth/callback"
     
     # Scheduler
     scheduler_enabled: bool = True

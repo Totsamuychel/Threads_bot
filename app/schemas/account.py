@@ -1,5 +1,6 @@
 """Account schemas."""
 
+from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
@@ -57,6 +58,8 @@ class AccountUpdate(BaseModel):
 class AccountResponse(AccountBase):
     """Schema for account response."""
     id: int
-    
+    threads_user_id: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True

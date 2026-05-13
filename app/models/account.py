@@ -23,6 +23,8 @@ class Account(Base):
     # Credentials (api_token is stored encrypted at rest)
     api_token = Column(EncryptedString(700))
     credentials_env_key = Column(String(100))
+    threads_user_id = Column(String(100))
+    token_expires_at = Column(DateTime(timezone=True))
     
     # Posting Configuration
     timezone = Column(String(50), default="UTC")

@@ -58,16 +58,15 @@
 
 ### Критично (блокирует production)
 
-**1. Реальная интеграция с Threads API** (`app/publishers/threads_api.py`)  
-Весь файл — заглушка. Не реализовано:
-- OAuth flow и хранение access token'ов
-- Реальные эндпоинты Meta Threads API (`/threads`, `/threads/publish`)
-- Получение credentials аккаунта из БД при публикации
-- Разбор реального ответа API (поля `id`, `permalink`)
-- Health check на рабочий эндпоинт
-- Загрузка медиафайлов
-
-Альтернатива — browser automation через Playwright (структура задокументирована в комментариях того же файла, строки 144–187, но не реализована).
+~~**1. Реальная интеграция с Threads API**~~ ✅ реализовано  
+`app/publishers/threads_api.py` — полная реализация на Meta Graph API v1.0:
+- OAuth 2.0: генерация URL, обмен кода на short-lived → long-lived токен, refresh
+- Публикация в два шага: создание контейнера → `threads_publish`
+- Автоматическое получение credentials из БД по `account_id`
+- Поддержка текстовых и image-постов, форматирование с хэштегами (лимит 500 символов)
+- Модель `Account` расширена: `threads_user_id`, `token_expires_at`
+- Новые API эндпоинты: `GET /{id}/oauth/url`, `GET /oauth/callback`, `POST /{id}/oauth/refresh`, `GET /{id}/threads/info`
+- Миграция `002_add_threads_oauth_fields.py`
 
 ~~**2. Небезопасные дефолты в `app/config.py`**~~ ✅ исправлено
 

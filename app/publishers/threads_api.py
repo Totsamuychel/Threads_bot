@@ -1,186 +1,281 @@
-"""Threads API publisher implementation (placeholder for real API)."""
+"""Threads API publisher — Meta Graph API v1.0 implementation."""
+
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+from urllib.parse import urlencode
 
 import httpx
-import logging
-from typing import Optional
-from datetime import datetime, timezone
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
 from app.publishers.base import BasePublisher, PublishResult
 
 logger = logging.getLogger(__name__)
 
+_AUTH_BASE = "https://threads.net"
+_GRAPH_BASE = "https://graph.threads.net/v1.0"
+_SCOPES = "threads_basic,threads_content_publish"
+
 
 class ThreadsAPIPublisher(BasePublisher):
-    """
-    Publisher for official Threads API.
-    
-    NOTE: This is a placeholder implementation. You need to:
-    1. Replace with actual Threads API endpoints when available
-    2. Implement proper authentication flow
-    3. Handle rate limiting and API-specific errors
-    4. Add media upload support if needed
-    
-    Threads API documentation: https://developers.facebook.com/docs/threads
-    (Update URL when official docs are available)
-    """
-    
-    def __init__(self, api_url: str, api_key: Optional[str] = None):
-        self.api_url = api_url
-        self.api_key = api_key
-    
-    async def publish(self, account_id: int, text: str, hashtags: list[str] = None,
-                     media_urls: list[str] = None) -> PublishResult:
+    """Publisher that uses the official Meta Threads Graph API."""
+
+    def __init__(self, db: Optional[AsyncSession] = None):
+        self.db = db
+
+    # ------------------------------------------------------------------
+    # OAuth helpers
+    # ------------------------------------------------------------------
+
+    def generate_auth_url(self, account_id: int) -> str:
+        """Return the OAuth authorization URL for the given account."""
+        from app.config import settings
+        params = urlencode({
+            "client_id": settings.threads_app_id,
+            "redirect_uri": settings.threads_redirect_uri,
+            "scope": _SCOPES,
+            "response_type": "code",
+            "state": str(account_id),
+        })
+        return f"{_AUTH_BASE}/oauth/authorize?{params}"
+
+    async def exchange_code(self, code: str) -> dict:
         """
-        Publish a post to Threads via official API.
-        
-        TODO: Implement actual Threads API integration
+        Exchange an authorization code for a short-lived token, then upgrade
+        to a long-lived token (60-day expiry).
+
+        Returns dict with keys: access_token, user_id, expires_at (datetime).
         """
-        
-        # Format the post
-        formatted_text = self._format_post_text(text, hashtags)
-        
+        from app.config import settings
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Step 1 — short-lived token
+            r = await client.post(
+                f"{_GRAPH_BASE.rstrip('/v1.0')}/oauth/access_token",
+                data={
+                    "code": code,
+                    "client_id": settings.threads_app_id,
+                    "client_secret": settings.threads_app_secret,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": settings.threads_redirect_uri,
+                },
+            )
+            r.raise_for_status()
+            short = r.json()
+            short_token = short["access_token"]
+            user_id = str(short["user_id"])
+
+            # Step 2 — long-lived token
+            r = await client.get(
+                f"{_GRAPH_BASE.rstrip('/v1.0')}/access_token",
+                params={
+                    "grant_type": "th_exchange_token",
+                    "client_secret": settings.threads_app_secret,
+                    "access_token": short_token,
+                },
+            )
+            r.raise_for_status()
+            long = r.json()
+
+        expires_in = long.get("expires_in", 5183944)  # ~60 days default
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+        return {
+            "access_token": long["access_token"],
+            "user_id": user_id,
+            "expires_at": expires_at,
+        }
+
+    async def refresh_token(self, access_token: str) -> dict:
+        """
+        Refresh a long-lived token before it expires.
+        Returns dict with keys: access_token, expires_at.
+        """
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.get(
+                f"{_GRAPH_BASE.rstrip('/v1.0')}/refresh_access_token",
+                params={
+                    "grant_type": "th_refresh_token",
+                    "access_token": access_token,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+
+        expires_in = data.get("expires_in", 5183944)
+        return {
+            "access_token": data["access_token"],
+            "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+        }
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _get_credentials(self, account_id: int) -> tuple[str, str]:
+        """Return (access_token, threads_user_id) for the given account."""
+        from app.models import Account
+        result = await self.db.execute(select(Account).where(Account.id == account_id))
+        account = result.scalar_one_or_none()
+
+        if not account:
+            raise ValueError(f"Account {account_id} not found")
+        if not account.api_token:
+            raise ValueError(
+                f"Account {account_id} has no access token — complete OAuth first"
+            )
+        if not account.threads_user_id:
+            raise ValueError(
+                f"Account {account_id} has no Threads user ID — complete OAuth first"
+            )
+        if account.token_expires_at and account.token_expires_at < datetime.now(timezone.utc):
+            raise ValueError(
+                f"Access token for account {account_id} is expired — refresh or re-authorize"
+            )
+
+        return account.api_token, account.threads_user_id
+
+    async def _create_container(
+        self,
+        user_id: str,
+        access_token: str,
+        text: str,
+        image_url: Optional[str] = None,
+        video_url: Optional[str] = None,
+    ) -> str:
+        """Create a media container and return its ID."""
+        params: dict = {"access_token": access_token}
+
+        if video_url:
+            params.update({"media_type": "VIDEO", "video_url": video_url, "text": text})
+        elif image_url:
+            params.update({"media_type": "IMAGE", "image_url": image_url, "text": text})
+        else:
+            params.update({"media_type": "TEXT", "text": text})
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(f"{_GRAPH_BASE}/{user_id}/threads", params=params)
+            r.raise_for_status()
+            return r.json()["id"]
+
+    async def _publish_container(
+        self, user_id: str, access_token: str, container_id: str
+    ) -> dict:
+        """Publish a previously created container and return the API response."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{_GRAPH_BASE}/{user_id}/threads_publish",
+                params={"creation_id": container_id, "access_token": access_token},
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def _get_post_permalink(self, post_id: str, access_token: str) -> Optional[str]:
+        """Fetch the permalink for a published post."""
         try:
-            # TODO: Get account credentials from database
-            # For now, this is a placeholder
-            
-            async with httpx.AsyncClient(timeout=30) as client:
-                # Build request payload
-                # NOTE: This is a hypothetical structure - adjust based on actual API
-                payload = {
-                    "text": formatted_text,
-                }
-                
-                if media_urls:
-                    payload["media"] = media_urls
-                
-                # Build headers
-                headers = {
-                    "Content-Type": "application/json",
-                }
-                
-                if self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                
-                # Make request
-                # TODO: Replace with actual Threads API endpoint
-                response = await client.post(
-                    f"{self.api_url}/posts",
-                    json=payload,
-                    headers=headers
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get(
+                    f"{_GRAPH_BASE}/{post_id}",
+                    params={"fields": "permalink", "access_token": access_token},
                 )
-                
-                if response.status_code in [200, 201]:
-                    data = response.json()
-                    
-                    # TODO: Extract actual fields from Threads API response
-                    return PublishResult(
-                        success=True,
-                        post_id=data.get("id"),
-                        post_url=data.get("url"),
-                        published_at=datetime.now(timezone.utc),
-                        metadata=data
-                    )
-                else:
-                    return PublishResult(
-                        success=False,
-                        error=f"API error: {response.status_code} - {response.text}"
-                    )
-                    
+                r.raise_for_status()
+                return r.json().get("permalink")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_text(text: str, hashtags: Optional[list[str]]) -> str:
+        """Combine body text with hashtags, staying within the 500-char limit."""
+        if not hashtags:
+            return text[:500]
+        tags = " ".join(f"#{t.lstrip('#')}" for t in hashtags)
+        combined = f"{text}\n\n{tags}"
+        if len(combined) <= 500:
+            return combined
+        # Truncate body to fit tags
+        available = 500 - len(tags) - 2
+        return f"{text[:available]}\n\n{tags}"
+
+    # ------------------------------------------------------------------
+    # BasePublisher interface
+    # ------------------------------------------------------------------
+
+    async def publish(
+        self,
+        account_id: int,
+        text: str,
+        hashtags: Optional[list[str]] = None,
+        media_urls: Optional[list[str]] = None,
+    ) -> PublishResult:
+        """Publish a post to Threads via the official Graph API."""
+        try:
+            access_token, user_id = await self._get_credentials(account_id)
+        except ValueError as e:
+            return PublishResult(success=False, error=str(e))
+
+        formatted_text = self._format_text(text, hashtags)
+        image_url = media_urls[0] if media_urls else None
+
+        try:
+            container_id = await self._create_container(
+                user_id, access_token, formatted_text, image_url=image_url
+            )
+            logger.debug(f"Created container {container_id} for account {account_id}")
+
+            data = await self._publish_container(user_id, access_token, container_id)
+            post_id = data["id"]
+
+            permalink = await self._get_post_permalink(post_id, access_token)
+
+            logger.info(f"Published post {post_id} for account {account_id}")
+            return PublishResult(
+                success=True,
+                post_id=post_id,
+                post_url=permalink,
+                published_at=datetime.now(timezone.utc),
+                metadata={"container_id": container_id, "threads_user_id": user_id},
+            )
+
+        except httpx.HTTPStatusError as e:
+            body = e.response.text
+            logger.error(f"Threads API error for account {account_id}: {e.response.status_code} {body}")
+            return PublishResult(
+                success=False,
+                error=f"API {e.response.status_code}: {body}",
+            )
         except httpx.TimeoutException:
-            return PublishResult(
-                success=False,
-                error="Request timeout"
-            )
+            return PublishResult(success=False, error="Request timeout")
         except Exception as e:
-            logger.error(f"Publishing error: {str(e)}")
-            return PublishResult(
-                success=False,
-                error=f"Unexpected error: {str(e)}"
-            )
-    
+            logger.error(f"Unexpected publish error for account {account_id}: {e}")
+            return PublishResult(success=False, error=str(e))
+
     async def health_check(self) -> bool:
-        """Check if Threads API is available."""
+        """Verify the Graph API is reachable."""
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                headers = {}
-                if self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                
-                # TODO: Replace with actual health check endpoint
-                response = await client.get(
-                    f"{self.api_url}/health",
-                    headers=headers
-                )
-                return response.status_code == 200
+                r = await client.get(f"{_GRAPH_BASE.rstrip('/v1.0')}/")
+                return r.status_code < 500
         except Exception:
             return False
-    
+
     async def get_account_info(self, account_id: int) -> Optional[dict]:
-        """
-        Get account information from Threads.
-        
-        TODO: Implement actual API call
-        """
+        """Return the Threads profile for the given account."""
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                headers = {}
-                if self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
-                
-                # TODO: Replace with actual endpoint
-                response = await client.get(
-                    f"{self.api_url}/accounts/{account_id}",
-                    headers=headers
+            access_token, user_id = await self._get_credentials(account_id)
+        except ValueError:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get(
+                    f"{_GRAPH_BASE}/{user_id}",
+                    params={
+                        "fields": "id,username,name,threads_profile_picture_url,threads_biography",
+                        "access_token": access_token,
+                    },
                 )
-                
-                if response.status_code == 200:
-                    return response.json()
-                    
+                r.raise_for_status()
+                return r.json()
         except Exception as e:
-            logger.error(f"Error fetching account info: {str(e)}")
-        
-        return None
-
-
-# NOTE: If you need to implement browser automation instead of API:
-# 
-# 1. Install playwright: pip install playwright
-# 2. Run: playwright install chromium
-# 3. Create app/publishers/browser_automation.py with this structure:
-#
-# from playwright.async_api import async_playwright
-# 
-# class BrowserPublisher(BasePublisher):
-#     async def publish(self, account_id, text, hashtags=None, media_urls=None):
-#         async with async_playwright() as p:
-#             browser = await p.chromium.launch(headless=True)
-#             page = await browser.new_page()
-#             
-#             # Navigate to Threads
-#             await page.goto("https://threads.net")
-#             
-#             # Login if needed (use stored credentials)
-#             # await page.fill('input[name="username"]', username)
-#             # await page.fill('input[name="password"]', password)
-#             # await page.click('button[type="submit"]')
-#             
-#             # Wait for compose button and click
-#             # await page.click('[aria-label="Create post"]')
-#             
-#             # Fill in post text
-#             # await page.fill('textarea', formatted_text)
-#             
-#             # Upload media if needed
-#             # if media_urls:
-#             #     for url in media_urls:
-#             #         await page.set_input_files('input[type="file"]', url)
-#             
-#             # Click publish
-#             # await page.click('button:has-text("Post")')
-#             
-#             # Wait for success and extract post URL
-#             # await page.wait_for_selector('[data-post-id]')
-#             # post_id = await page.get_attribute('[data-post-id]', 'data-post-id')
-#             
-#             await browser.close()
-#             
-#             return PublishResult(success=True, post_id=post_id, ...)
+            logger.error(f"Error fetching account info for {account_id}: {e}")
+            return None
