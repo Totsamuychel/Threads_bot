@@ -38,9 +38,9 @@ pytest==7.4.3
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 
-# Optional: Browser automation (uncomment if needed)
-# playwright==1.40.0
-# selenium==4.15.2
+# Browser automation (for browser publisher)
+playwright>=1.40.0
+browser-use>=1.0.0
 
 # Development
 black==23.11.0

@@ -26,10 +26,15 @@ class Settings(BaseSettings):
     llm_timeout: int = 60
     
     # Threads Publisher
-    threads_publisher: str = "mock"  # mock, api
+    threads_publisher: str = "mock"  # mock, api, browser
     threads_app_id: Optional[str] = None
     threads_app_secret: Optional[str] = None
     threads_redirect_uri: str = "http://localhost:8000/api/accounts/oauth/callback"
+
+    # Browser publisher
+    threads_cookies_path: str = "threads_cookies.json"
+    browser_headless: bool = False
+    browser_login_timeout: int = 60
     
     # Scheduler
     scheduler_enabled: bool = True
