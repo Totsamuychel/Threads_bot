@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     threads_cookies_path: str = "threads_cookies.json"
     browser_headless: bool = False
     browser_login_timeout: int = 60
+
+    # Vision agent (Qwen VL через Ollama)
+    vision_model: str = "qwen2-vl"
+    vision_base_url: str = "http://localhost:11434"
+    vision_timeout: int = 60
     
     # Scheduler
     scheduler_enabled: bool = True

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.publishers.base import BasePublisher, PublishResult
+from app.publishers.vision_agent import VisionAgent
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,7 @@ class BrowserPublisher(BasePublisher):
         self._playwright = None
         self._context = None
         self._mouse = HumanMouse()
+        self._vision: Optional[VisionAgent] = None
 
     async def initialize(self) -> None:
         from playwright.async_api import async_playwright
@@ -288,24 +290,47 @@ class BrowserPublisher(BasePublisher):
 
         await self._context.add_init_script(_STEALTH_PATCHES)
 
+        self._vision = VisionAgent(
+            model=settings.vision_model,
+            base_url=settings.vision_base_url,
+            timeout=settings.vision_timeout,
+        )
+
         page = await self._context.new_page()
         await page.goto("https://www.threads.net", wait_until="domcontentloaded")
         await asyncio.sleep(random.uniform(2, 4))
 
         if not await self._is_logged_in(page):
+            await page.screenshot(path="debug_not_logged_in.png")
             logger.info(
-                "Не авторизован — ждём ручного логина %d сек...",
+                "Не авторизован (скриншот: debug_not_logged_in.png) — "
+                "ждём ручного логина %d сек...",
                 settings.browser_login_timeout,
             )
             await asyncio.sleep(settings.browser_login_timeout)
+            await page.reload(wait_until="load")
+            await asyncio.sleep(3)
             if not await self._is_logged_in(page):
-                logger.warning("Авторизация не обнаружена после таймаута")
+                await page.screenshot(path="debug_still_not_logged_in.png")
+                logger.warning(
+                    "Авторизация не обнаружена (скриншот: debug_still_not_logged_in.png)"
+                )
+                await page.close()
+                raise RuntimeError(
+                    "Не удалось авторизоваться в Threads. "
+                    "Запусти debug_selectors.py, залогинься вручную и повтори."
+                )
 
         await page.close()
 
     async def _is_logged_in(self, page) -> bool:
+        # Навигационные табы "For you" / "Для вас" / "Home" есть только в ленте
         try:
-            await page.wait_for_selector(_compose_sel(), timeout=6_000)
+            await page.wait_for_selector(
+                '[aria-label="For you"], [aria-label="Home"], '
+                '[aria-label="Для вас"], [aria-label="Головна"]',
+                timeout=15_000,
+            )
             return True
         except Exception:
             return False
@@ -330,66 +355,99 @@ class BrowserPublisher(BasePublisher):
         post_text = self._format_post_text(text, hashtags)
         page = await self._context.new_page()
         mouse = self._mouse
+        vision = self._vision
 
         try:
             # 1. Открываем главную
             logger.info("Открываем Threads")
             await page.goto("https://www.threads.net", wait_until="domcontentloaded")
-            await asyncio.sleep(random.uniform(1.5, 3))
+            await asyncio.sleep(random.uniform(2, 3.5))
 
-            # 2. Имитируем чтение ленты — курсор блуждает 3–6 секунд
+            # 2. Читаем ленту — курсор блуждает
             logger.info("Читаем ленту...")
-            await mouse.wander(page, random.uniform(3, 6))
+            await mouse.wander(page, random.uniform(3, 5))
+            await page.mouse.wheel(0, random.randint(150, 400))
+            await asyncio.sleep(random.uniform(1, 2))
+            await page.mouse.wheel(0, -random.randint(80, 200))
+            await asyncio.sleep(random.uniform(0.8, 1.8))
 
-            # Скроллим ленту немного вниз и обратно
-            await page.mouse.wheel(0, random.randint(200, 500))
-            await asyncio.sleep(random.uniform(1, 2.5))
-            await page.mouse.wheel(0, -random.randint(100, 250))
-            await asyncio.sleep(random.uniform(0.8, 2))
+            # 3. VisionAgent находит кнопку создания поста
+            logger.info("VisionAgent ищет поле создания поста...")
+            compose_xy = await vision.find(
+                page,
+                "the text input area at the top of the feed for writing a new post "
+                "(usually says 'What's new?', 'Что нового?' or 'Що нового?'). "
+                "It has a 'Post' or 'Опубликовать' button next to it.",
+            )
+            if compose_xy:
+                logger.info("VisionAgent нашёл compose: %s", compose_xy)
+                await mouse.move_to(page, *compose_xy)
+                await asyncio.sleep(random.uniform(0.2, 0.5))
+                await page.mouse.click(*compose_xy)
+            else:
+                # Fallback: CSS-селектор
+                logger.warning("VisionAgent не нашёл compose, используем селектор")
+                compose = page.locator(_compose_sel()).first
+                await mouse.click(page, compose)
+            await asyncio.sleep(random.uniform(1, 2))
 
-            # 3. Находим и кликаем кнопку создания поста
-            logger.info("Нажимаем кнопку нового поста")
-            compose = page.locator(_compose_sel()).first
-            await mouse.click(page, compose)
-            await asyncio.sleep(random.uniform(1.2, 2.5))
+            # 4. VisionAgent находит текстовый редактор
+            logger.info("VisionAgent ищет текстовый редактор...")
+            editor_xy = await vision.find(
+                page,
+                "the active text input field or editor where I can type a new post. "
+                "It should be an empty editable area, possibly with placeholder text.",
+            )
+            if editor_xy:
+                logger.info("VisionAgent нашёл editor: %s", editor_xy)
+                await mouse.move_to(page, *editor_xy)
+                await asyncio.sleep(random.uniform(0.15, 0.4))
+                await page.mouse.click(*editor_xy)
+            else:
+                logger.warning("VisionAgent не нашёл editor, используем селектор")
+                await page.wait_for_selector(_editor_sel(), timeout=8_000)
+                editor = page.locator(_editor_sel()).first
+                await mouse.click(page, editor)
+            await asyncio.sleep(random.uniform(0.3, 0.6))
 
-            # 4. Находим текстовое поле
-            logger.info("Вводим текст поста")
-            editor = page.locator(
-                'div[contenteditable="true"][role="textbox"], '
-                'div[contenteditable="true"], '
-                'textarea'
-            ).first
-            await editor.scroll_into_view_if_needed()
-            await mouse.click(page, editor)
-            await asyncio.sleep(random.uniform(0.3, 0.7))
-
-            # 5. Печатаем текст по-человечески (с опечатками и паузами)
+            # 5. Печатаем как человек
+            logger.info("Вводим текст: %.40s...", post_text)
             await _human_type(page, post_text)
 
-            # Делаем паузу — как будто перечитываем написанное
-            await mouse.wander(page, random.uniform(1, 2.5))
+            # Перечитываем написанное
+            await mouse.wander(page, random.uniform(1, 2))
 
-            # 6. Кликаем «Опубликовать»
-            logger.info("Нажимаем Опубликовать")
-            post_btn = page.locator(_post_btn_sel()).last
-            await mouse.click(page, post_btn)
-            await asyncio.sleep(random.uniform(2, 4))
+            # 6. VisionAgent находит кнопку публикации
+            logger.info("VisionAgent ищет кнопку публикации...")
+            post_xy = await vision.find(
+                page,
+                "the 'Post' or 'Опубликовать' or 'Publish' button to submit/post the text. "
+                "It is usually a colored button (blue or black) near the text editor.",
+            )
+            if post_xy:
+                logger.info("VisionAgent нашёл Post btn: %s", post_xy)
+                await mouse.move_to(page, *post_xy)
+                await asyncio.sleep(random.uniform(0.2, 0.5))
+                await page.mouse.click(*post_xy)
+            else:
+                logger.warning("VisionAgent не нашёл Post btn, используем селектор")
+                post_btn = page.locator(_post_btn_sel()).first
+                await mouse.click(page, post_btn)
+            await asyncio.sleep(random.uniform(2, 3.5))
 
-            # 7. Ждём подтверждения
-            try:
-                await page.wait_for_selector(
-                    '[data-pressable-container], [role="status"]',
-                    timeout=8_000,
-                )
-            except Exception:
-                pass
+            # 7. VisionAgent проверяет что пост опубликован
+            success = await vision.verify(
+                page,
+                "Has the post been submitted successfully? "
+                "Is the text input area now empty or reset to its default state?",
+            )
+            logger.info("VisionAgent подтверждение публикации: %s", success)
 
             logger.info("Пост опубликован через браузер")
             return PublishResult(
                 success=True,
                 published_at=datetime.now(timezone.utc),
-                metadata={"method": "browser"},
+                metadata={"method": "browser+vision", "vision_confirmed": success},
             )
 
         except Exception:
@@ -415,16 +473,15 @@ class BrowserPublisher(BasePublisher):
 # ---------------------------------------------------------------------------
 
 def _compose_sel() -> str:
-    return (
-        '[aria-label*="New post"], [aria-label*="New thread"], '
-        '[aria-label*="Новый пост"], [aria-label*="Новая нить"]'
-    )
+    # Inline compose field on the main feed (confirmed via DOM inspection)
+    return 'div[role="button"][aria-label*="Empty text field"]'
+
+
+def _editor_sel() -> str:
+    # Appears after clicking compose (confirmed via DOM inspection)
+    return 'div[contenteditable="true"][role="textbox"]'
 
 
 def _post_btn_sel() -> str:
-    return (
-        '[aria-label="Post"], [aria-label="Опубликовать"], '
-        'div[role="button"]:has-text("Post"), '
-        'div[role="button"]:has-text("Опубликовать"), '
-        'button:has-text("Post"), button:has-text("Опубликовать")'
-    )
+    # First Post button in DOM belongs to compose area (confirmed via DOM order)
+    return 'div[role="button"]:has-text("Post")'
