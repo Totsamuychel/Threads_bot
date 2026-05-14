@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     vision_base_url: str = "http://localhost:11434"
     vision_timeout: int = 60
     
+    # Post scheduling variance — random ±N minutes added to each scheduled time
+    post_time_variance_minutes: int = 10
+
     # Scheduler
     scheduler_enabled: bool = True
     scheduler_timezone: str = "UTC"

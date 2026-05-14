@@ -145,11 +145,73 @@ async def delete_post(post_id: int, db: AsyncSession = Depends(get_db)):
     """Delete a post."""
     result = await db.execute(select(Post).where(Post.id == post_id))
     post = result.scalar_one_or_none()
-    
+
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    
+
     await db.delete(post)
     await db.commit()
-    
+
     return SuccessResponse(message=f"Post {post_id} deleted successfully")
+
+
+# ------------------------------------------------------------------
+# Social activity endpoints
+# ------------------------------------------------------------------
+
+@router.post("/activity/{account_id}/run", response_model=SuccessResponse)
+async def run_social_activity(account_id: int, db: AsyncSession = Depends(get_db)):
+    """Manually trigger a social activity session (likes, replies, follows) for an account."""
+    from app.services.social_actions import SocialActionsService
+    service = SocialActionsService(db, account_id)
+    result = await service.run()
+    return SuccessResponse(
+        message="Social activity session completed",
+        data=result,
+    )
+
+
+@router.post("/activity/{account_id}/reply", response_model=SuccessResponse)
+async def post_api_reply(
+    account_id: int,
+    thread_id: str = Query(..., description="Threads post ID to reply to"),
+    text: str = Query(..., description="Reply text (max 500 chars)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Post a reply to a Threads post via the official API."""
+    from app.publishers.threads_api import ThreadsAPIPublisher
+    publisher = ThreadsAPIPublisher(db=db)
+    result = await publisher.reply_to_thread(account_id, thread_id, text)
+    if not result.success:
+        raise HTTPException(status_code=502, detail=result.error)
+    return SuccessResponse(
+        message="Reply posted successfully",
+        data={"post_id": result.post_id, "post_url": result.post_url},
+    )
+
+
+@router.get("/activity/{account_id}/stats", response_model=SuccessResponse)
+async def get_activity_stats(
+    account_id: int,
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return social action counts for the past N days."""
+    from app.models.social_action import SocialAction
+    from sqlalchemy import func, and_
+    from datetime import datetime, timedelta, timezone
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(SocialAction.action_type, func.count(SocialAction.id))
+        .where(
+            and_(
+                SocialAction.account_id == account_id,
+                SocialAction.success == True,
+                SocialAction.created_at >= since,
+            )
+        )
+        .group_by(SocialAction.action_type)
+    )
+    stats = {row[0]: row[1] for row in result.all()}
+    return SuccessResponse(message="Activity stats", data=stats)

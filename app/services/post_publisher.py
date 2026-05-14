@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models import Post, ActivityLog
 from app.models.content import PostStatus
-from app.publishers import get_publisher
+from app.publishers import get_publisher, BasePublisher
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -16,9 +16,18 @@ logger = logging.getLogger(__name__)
 class PostPublisher:
     """Service for publishing posts to Threads."""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, publisher_type: Optional[str] = None):
         self.db = db
-        self.publisher = get_publisher(db=db)
+        self._publisher_type = publisher_type  # resolved per-post in publish_post()
+
+    async def _get_publisher(self, account_id: int) -> "BasePublisher":
+        """Resolve publisher for the account — account setting beats global config."""
+        from app.models import Account
+        from sqlalchemy import select
+        result = await self.db.execute(select(Account).where(Account.id == account_id))
+        account = result.scalar_one_or_none()
+        ptype = (account.publisher_type if account and account.publisher_type else None)
+        return get_publisher(publisher_type=ptype, db=self.db)
     
     async def publish_post(self, post_id: int) -> bool:
         """
@@ -51,9 +60,11 @@ class PostPublisher:
         
         try:
             logger.info(f"Publishing post {post_id} for account {post.account_id}")
-            
+
+            publisher = await self._get_publisher(post.account_id)
+
             # Publish via publisher
-            result = await self.publisher.publish(
+            result = await publisher.publish(
                 account_id=post.account_id,
                 text=post.text,
                 hashtags=post.hashtags,

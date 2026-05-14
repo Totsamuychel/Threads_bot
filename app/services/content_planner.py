@@ -67,7 +67,23 @@ class ContentPlanner:
                 # Parse time
                 hour, minute = map(int, time_str.split(":"))
                 scheduled_time = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                
+
+                # Apply random offset so posts don't always land at the exact same second
+                variance_min = account.schedule_config.get(
+                    "variance_minutes", settings.post_time_variance_minutes
+                )
+                if variance_min > 0:
+                    offset_secs = random.randint(-variance_min * 60, variance_min * 60)
+                    scheduled_time += timedelta(seconds=offset_secs)
+                    # Random seconds within the resulting minute for extra naturalness
+                    scheduled_time = scheduled_time.replace(
+                        second=random.randint(0, 59), microsecond=0
+                    )
+                    # Keep within the same calendar day
+                    day_start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    day_end = day_start + timedelta(days=1, seconds=-1)
+                    scheduled_time = max(day_start, min(day_end, scheduled_time))
+
                 # Skip if in the past
                 if scheduled_time < now:
                     continue

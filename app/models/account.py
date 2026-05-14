@@ -51,6 +51,16 @@ class Account(Base):
     llm_model = Column(String(100))  # Per-account model override
     llm_worker_id = Column(Integer, ForeignKey("workers.id"), nullable=True)
     
+    # Publisher — overrides global THREADS_PUBLISHER setting per account
+    # Allowed values: "api", "browser", "mock", or None (use global default)
+    publisher_type = Column(String(20))
+
+    # Social actions configuration
+    social_actions_enabled = Column(Boolean, default=False)
+    likes_per_day = Column(Integer, default=20)
+    replies_per_day = Column(Integer, default=5)
+    follows_per_day = Column(Integer, default=10)
+
     # Status
     is_active = Column(Boolean, default=True)
     
@@ -62,6 +72,7 @@ class Account(Base):
     content_plans = relationship("ContentPlan", back_populates="account", cascade="all, delete-orphan")
     posts = relationship("Post", back_populates="account", cascade="all, delete-orphan")
     logs = relationship("ActivityLog", back_populates="account", cascade="all, delete-orphan")
+    social_actions = relationship("SocialAction", back_populates="account", cascade="all, delete-orphan")
     worker = relationship("Worker", back_populates="accounts")
     
     def __repr__(self):

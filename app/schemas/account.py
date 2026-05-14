@@ -6,7 +6,6 @@ from typing import Optional, List
 
 
 class AccountBase(BaseModel):
-    """Base account schema."""
     username: str = Field(..., min_length=1, max_length=100)
     display_name: Optional[str] = None
     timezone: str = "UTC"
@@ -25,16 +24,21 @@ class AccountBase(BaseModel):
     llm_model: Optional[str] = None
     llm_worker_id: Optional[int] = None
     is_active: bool = True
+    # Per-account publisher override: "api" | "browser" | "mock" | None (global default)
+    publisher_type: Optional[str] = None
+    # Social activity
+    social_actions_enabled: bool = False
+    likes_per_day: int = 20
+    replies_per_day: int = 5
+    follows_per_day: int = 10
 
 
 class AccountCreate(AccountBase):
-    """Schema for creating an account."""
     api_token: Optional[str] = None
     credentials_env_key: Optional[str] = None
 
 
 class AccountUpdate(BaseModel):
-    """Schema for updating an account."""
     display_name: Optional[str] = None
     timezone: Optional[str] = None
     schedule_type: Optional[str] = None
@@ -53,10 +57,14 @@ class AccountUpdate(BaseModel):
     llm_worker_id: Optional[int] = None
     is_active: Optional[bool] = None
     api_token: Optional[str] = None
+    publisher_type: Optional[str] = None
+    social_actions_enabled: Optional[bool] = None
+    likes_per_day: Optional[int] = None
+    replies_per_day: Optional[int] = None
+    follows_per_day: Optional[int] = None
 
 
 class AccountResponse(AccountBase):
-    """Schema for account response."""
     id: int
     threads_user_id: Optional[str] = None
     token_expires_at: Optional[datetime] = None

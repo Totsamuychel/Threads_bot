@@ -282,6 +282,64 @@ class ThreadsAPIPublisher(BasePublisher):
 
         return PublishResult(success=False, error="Publish failed after token refresh")
 
+    async def reply_to_thread(
+        self,
+        account_id: int,
+        thread_id: str,
+        text: str,
+    ) -> PublishResult:
+        """
+        Post a reply to any public Threads post via the official API.
+        Uses reply_to_id when creating the media container.
+        """
+        try:
+            access_token, user_id = await self._get_credentials(account_id)
+        except ValueError as e:
+            return PublishResult(success=False, error=str(e))
+
+        text = text[:500]
+
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    r = await client.post(
+                        f"{_GRAPH_BASE}/{user_id}/threads",
+                        params={
+                            "media_type": "TEXT",
+                            "text": text,
+                            "reply_to_id": thread_id,
+                            "access_token": access_token,
+                        },
+                    )
+                    r.raise_for_status()
+                    container_id = r.json()["id"]
+
+                data = await self._publish_container(user_id, access_token, container_id)
+                post_id = data["id"]
+                permalink = await self._get_post_permalink(post_id, access_token)
+
+                logger.info("Reply %s posted for account %s to thread %s", post_id, account_id, thread_id)
+                return PublishResult(
+                    success=True,
+                    post_id=post_id,
+                    post_url=permalink,
+                    published_at=datetime.now(timezone.utc),
+                    metadata={"reply_to_id": thread_id},
+                )
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401 and attempt == 0 and self.db:
+                    try:
+                        access_token, user_id = await self._refresh_and_save(account_id)
+                        continue
+                    except Exception:
+                        pass
+                return PublishResult(success=False, error=f"API {e.response.status_code}: {e.response.text}")
+            except Exception as e:
+                return PublishResult(success=False, error=str(e))
+
+        return PublishResult(success=False, error="Reply failed after token refresh")
+
     async def health_check(self) -> bool:
         """Verify the Graph API is reachable."""
         try:

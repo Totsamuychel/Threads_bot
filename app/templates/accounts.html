@@ -1,71 +1,283 @@
 {% extends "base.html" %}
 {% block title %}Accounts{% endblock %}
 {% block page_title %}Accounts{% endblock %}
-{% block actions %}<button class="btn btn-primary" onclick="showCreateModal()" id="btn-new-account">+ New Account</button>{% endblock %}
+{% block actions %}<button class="btn btn-primary" onclick="showCreateModal()">+ New Account</button>{% endblock %}
 
 {% block content %}
-<div id="accounts-list" class="table-container">
-    <p class="empty-state">Loading...</p>
-</div>
+<div id="accounts-list" class="table-container"><p class="empty-state">Loading...</p></div>
 
-<!-- Create/Edit Modal -->
+<!-- ============================================================
+     Account Modal
+     ============================================================ -->
 <div class="modal-overlay" id="account-modal" style="display:none">
-    <div class="modal">
-        <h3 id="modal-title">New Account</h3>
-        <form id="account-form" onsubmit="saveAccount(event)">
-            <input type="hidden" id="f-id">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>Username *</label>
-                    <input type="text" id="f-username" required>
-                </div>
-                <div class="form-group">
-                    <label>Display Name</label>
-                    <input type="text" id="f-display_name">
-                </div>
-                <div class="form-group">
-                    <label>Language</label>
-                    <input type="text" id="f-language" value="en">
-                </div>
-                <div class="form-group">
-                    <label>Timezone</label>
-                    <input type="text" id="f-timezone" value="UTC">
-                </div>
-                <div class="form-group full-width">
-                    <label>Topics (comma-separated)</label>
-                    <input type="text" id="f-topics" placeholder="AI, coding, tech news">
-                </div>
-                <div class="form-group full-width">
-                    <label>Tone</label>
-                    <input type="text" id="f-tone" placeholder="casual, witty, educational">
-                </div>
-                <div class="form-group full-width">
-                    <label>Target Audience</label>
-                    <input type="text" id="f-target_audience" placeholder="developers and tech enthusiasts">
-                </div>
-                <div class="form-group">
-                    <label>LLM Model Override</label>
-                    <select id="f-llm_model"><option value="">Default</option></select>
-                </div>
-                <div class="form-group">
-                    <label>Worker</label>
-                    <select id="f-llm_worker_id"><option value="">Auto (default)</option></select>
-                </div>
-                <div class="form-group">
-                    <label>Post Schedule (times, comma)</label>
-                    <input type="text" id="f-schedule" value="09:00,14:00,18:00">
-                </div>
-                <div class="form-group">
-                    <label>Max Posts/Day</label>
-                    <input type="number" id="f-max_posts" value="3" min="1" max="20">
-                </div>
-            </div>
-            <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Save</button>
-            </div>
-        </form>
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h3 id="modal-title">New Account</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
+
+    <!-- Tabs -->
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('tab-general', this)">⚙️ General</button>
+      <button class="tab-btn"        onclick="switchTab('tab-schedule', this)">📅 Schedule</button>
+      <button class="tab-btn"        onclick="switchTab('tab-content', this)">✍️ Content</button>
+      <button class="tab-btn"        onclick="switchTab('tab-activity', this)">❤️ Activity</button>
+    </div>
+
+    <form id="account-form" onsubmit="saveAccount(event)">
+      <input type="hidden" id="f-id">
+
+      <!-- ── TAB: GENERAL ─────────────────────────────────────── -->
+      <div id="tab-general" class="tab-pane active">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Username *</label>
+            <input type="text" id="f-username" required placeholder="@handle">
+          </div>
+          <div class="form-group">
+            <label>Display Name</label>
+            <input type="text" id="f-display_name" placeholder="Optional label">
+          </div>
+          <div class="form-group">
+            <label>Language</label>
+            <select id="f-language">
+              <option value="en">English</option>
+              <option value="ru">Русский</option>
+              <option value="es">Español</option>
+              <option value="de">Deutsch</option>
+              <option value="fr">Français</option>
+              <option value="pt">Português</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Timezone</label>
+            <input type="text" id="f-timezone" value="UTC" placeholder="Europe/Moscow">
+          </div>
+        </div>
+
+        <!-- Publishing Method -->
+        <div class="section-divider">Publishing method</div>
+        <div class="publisher-cards" id="publisher-cards">
+          <label class="publisher-card" onclick="selectPublisher('api')">
+            <input type="radio" name="publisher" value="api" id="pub-api">
+            <div class="publisher-card-body">
+              <div class="pub-icon">🔗</div>
+              <div class="pub-title">Official API</div>
+              <div class="pub-desc">Meta Graph API v1.0 — requires OAuth. Safest, no anti-bot risk.</div>
+            </div>
+          </label>
+          <label class="publisher-card" onclick="selectPublisher('browser')">
+            <input type="radio" name="publisher" value="browser" id="pub-browser">
+            <div class="publisher-card-body">
+              <div class="pub-icon">🌐</div>
+              <div class="pub-title">Browser</div>
+              <div class="pub-desc">Playwright automation. Supports activity (likes, follows, replies).</div>
+            </div>
+          </label>
+          <label class="publisher-card" onclick="selectPublisher('mock')">
+            <input type="radio" name="publisher" value="mock" id="pub-mock">
+            <div class="publisher-card-body">
+              <div class="pub-icon">🧪</div>
+              <div class="pub-title">Mock (Test)</div>
+              <div class="pub-desc">Logs only — no real posting. Use for development.</div>
+            </div>
+          </label>
+        </div>
+
+        <!-- OAuth section — shown only for API mode -->
+        <div id="oauth-section" class="oauth-box" style="display:none">
+          <div class="oauth-status" id="oauth-status">
+            <span class="badge badge-failed">Not connected</span>
+          </div>
+          <div class="oauth-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="btn-oauth" onclick="connectOAuth()" disabled>
+              🔑 Connect Threads Account
+            </button>
+            <button type="button" class="btn btn-sm" id="btn-refresh-token" onclick="refreshToken()" style="display:none">
+              🔄 Refresh Token
+            </button>
+          </div>
+          <p class="hint">After clicking Connect, authorise in the browser window that opens. The token is valid for 60 days.</p>
+        </div>
+      </div>
+
+      <!-- ── TAB: SCHEDULE ────────────────────────────────────── -->
+      <div id="tab-schedule" class="tab-pane">
+        <div class="form-group">
+          <label>Schedule type</label>
+          <select id="f-schedule-type" onchange="onScheduleTypeChange()">
+            <option value="times">Fixed times</option>
+            <option value="cron">CRON expression</option>
+          </select>
+        </div>
+
+        <!-- Fixed times builder -->
+        <div id="schedule-times-builder">
+          <label>Posting times</label>
+          <div id="time-slots"></div>
+          <button type="button" class="btn btn-sm" onclick="addTimeSlot()">+ Add time</button>
+          <p class="hint">Each day the bot will post at these times (±variance).</p>
+        </div>
+
+        <!-- CRON input -->
+        <div id="schedule-cron-builder" style="display:none">
+          <div class="form-group">
+            <label>CRON expression</label>
+            <input type="text" id="f-cron" placeholder="0 9,14,18 * * 1-5" style="font-family:monospace">
+            <p class="hint">Standard 5-field cron. Example: <code>0 9,14,18 * * 1-5</code> = Mon–Fri at 09:00, 14:00, 18:00.</p>
+          </div>
+        </div>
+
+        <div class="form-grid" style="margin-top:1rem">
+          <div class="form-group">
+            <label>Max posts / day</label>
+            <input type="number" id="f-max_posts" value="3" min="1" max="20">
+          </div>
+          <div class="form-group">
+            <label>Time variance ± <span id="variance-label">10</span> min</label>
+            <input type="range" id="f-variance" min="0" max="30" value="10"
+                   oninput="document.getElementById('variance-label').textContent=this.value"
+                   style="width:100%;margin-top:6px">
+            <p class="hint">Adds a random offset so posts don't land at the exact same second every day.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TAB: CONTENT ─────────────────────────────────────── -->
+      <div id="tab-content" class="tab-pane">
+        <div class="form-grid">
+          <div class="form-group full-width">
+            <label>Topics <span class="hint-inline">(comma-separated)</span></label>
+            <input type="text" id="f-topics" placeholder="AI, productivity, tech news">
+          </div>
+          <div class="form-group full-width">
+            <label>Tone</label>
+            <input type="text" id="f-tone" placeholder="casual, witty, educational">
+          </div>
+          <div class="form-group full-width">
+            <label>Target Audience</label>
+            <input type="text" id="f-target_audience" placeholder="developers and tech enthusiasts">
+          </div>
+          <div class="form-group full-width">
+            <label>Base Hashtags <span class="hint-inline">(comma-separated)</span></label>
+            <input type="text" id="f-base_hashtags" placeholder="#tech, #ai">
+          </div>
+          <div class="form-group">
+            <label>Min post length</label>
+            <input type="number" id="f-min_length" value="50" min="10" max="490">
+          </div>
+          <div class="form-group">
+            <label>Max post length</label>
+            <input type="number" id="f-max_length" value="500" min="50" max="500">
+          </div>
+          <div class="form-group">
+            <label>LLM Model override</label>
+            <select id="f-llm_model"><option value="">Default</option></select>
+          </div>
+          <div class="form-group">
+            <label>Worker</label>
+            <select id="f-llm_worker_id"><option value="">Auto</option></select>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TAB: ACTIVITY ────────────────────────────────────── -->
+      <div id="tab-activity" class="tab-pane">
+        <div class="activity-notice" id="activity-notice">
+          ℹ️ Activity (likes, follows) requires <strong>Browser</strong> publisher.
+          API replies work with both modes.
+        </div>
+
+        <div class="form-group toggle-row">
+          <label>Enable social activity</label>
+          <label class="toggle">
+            <input type="checkbox" id="f-social_enabled" onchange="onActivityToggle()">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div id="activity-settings" style="display:none">
+          <div class="activity-grid">
+
+            <!-- LIKES -->
+            <div class="activity-card">
+              <div class="activity-card-header">
+                <span class="activity-icon">❤️</span>
+                <strong>Likes</strong>
+                <span class="badge badge-posted">Browser</span>
+              </div>
+              <p class="activity-desc">Likes random posts in the feed. Runs every 3 hours.</p>
+              <div class="form-group">
+                <label>Likes per day</label>
+                <input type="number" id="f-likes_per_day" value="20" min="0" max="100">
+              </div>
+            </div>
+
+            <!-- FOLLOWS -->
+            <div class="activity-card">
+              <div class="activity-card-header">
+                <span class="activity-icon">👤</span>
+                <strong>Follows</strong>
+                <span class="badge badge-posted">Browser</span>
+              </div>
+              <p class="activity-desc">Follows suggested accounts visible in feed.</p>
+              <div class="form-group">
+                <label>Follows per day</label>
+                <input type="number" id="f-follows_per_day" value="10" min="0" max="50">
+              </div>
+            </div>
+
+            <!-- REPLIES / COMMENTS -->
+            <div class="activity-card">
+              <div class="activity-card-header">
+                <span class="activity-icon">💬</span>
+                <strong>Replies / Comments</strong>
+                <span class="badge badge-posted">API + Browser</span>
+              </div>
+              <p class="activity-desc">
+                LLM generates contextual replies.<br>
+                <em>API mode</em>: replies via official Graph API (use button below).<br>
+                <em>Browser mode</em>: replies to posts in feed automatically.
+              </p>
+              <div class="form-group">
+                <label>Replies per day</label>
+                <input type="number" id="f-replies_per_day" value="5" min="0" max="30">
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Manual API reply -->
+          <div class="section-divider">Manual API reply</div>
+          <div class="form-grid" id="manual-reply-row">
+            <div class="form-group full-width">
+              <label>Thread ID to reply to</label>
+              <input type="text" id="reply-thread-id" placeholder="18123456789012345"
+                     style="font-family:monospace">
+            </div>
+            <div class="form-group full-width">
+              <label>Reply text (max 500 chars)</label>
+              <textarea id="reply-text" rows="3" placeholder="Type your reply..." maxlength="500"></textarea>
+            </div>
+            <div class="form-group full-width">
+              <button type="button" class="btn btn-primary btn-sm" onclick="sendApiReply()">
+                📤 Send reply via API
+              </button>
+              <button type="button" class="btn btn-sm" onclick="runActivityNow()" style="margin-left:8px">
+                ▶️ Run activity session now
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Footer ───────────────────────────────────────────── -->
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Account</button>
+      </div>
+    </form>
+  </div>
 </div>
 {% endblock %}
 
@@ -73,123 +285,342 @@
 <script>
 let editingId = null;
 
-async function loadAccounts() {
-    try {
-        const [accounts, workers] = await Promise.all([api('/api/accounts'), api('/api/workers')]);
-        const el = document.getElementById('accounts-list');
-        
-        // Populate worker dropdown
-        const wSelect = document.getElementById('f-llm_worker_id');
-        wSelect.innerHTML = '<option value="">Auto (default)</option>' +
-            workers.map(w => `<option value="${w.id}">${w.name} (${w.host})</option>`).join('');
-        
-        // Populate model dropdown from all workers
-        const allModels = [...new Set(workers.flatMap(w => w.models_available || []))];
-        const mSelect = document.getElementById('f-llm_model');
-        mSelect.innerHTML = '<option value="">Default</option>' +
-            allModels.map(m => `<option value="${m}">${m}</option>`).join('');
-        
-        if (accounts.length === 0) {
-            el.innerHTML = '<p class="empty-state">No accounts yet. Click "New Account" to create one.</p>';
-            return;
-        }
-        
-        el.innerHTML = `<table>
-            <thead><tr><th>Username</th><th>Topics</th><th>Model</th><th>Worker</th><th>Status</th><th>Actions</th></tr></thead>
-            <tbody>${accounts.map(a => {
-                const w = workers.find(w => w.id === a.llm_worker_id);
-                return `<tr>
-                    <td><strong>${escapeHtml(a.username)}</strong><br><small>${a.display_name || ''}</small></td>
-                    <td>${(a.topics || []).map(t => `<span class="tag">${t}</span>`).join('')}</td>
-                    <td>${a.llm_model || '<em>default</em>'}</td>
-                    <td>${w ? w.name : '<em>auto</em>'}</td>
-                    <td><span class="badge ${a.is_active ? 'badge-posted' : 'badge-failed'}">${a.is_active ? 'active' : 'inactive'}</span></td>
-                    <td class="actions">
-                        <button class="btn btn-sm" onclick="editAccount(${a.id})">Edit</button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">Delete</button>
-                    </td>
-                </tr>`;
-            }).join('')}</tbody></table>`;
-    } catch (e) {
-        console.error(e);
+// ── Tab switching ────────────────────────────────────────────
+function switchTab(tabId, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(tabId).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Publisher selection ──────────────────────────────────────
+function selectPublisher(type) {
+  document.querySelectorAll('.publisher-card').forEach(c => c.classList.remove('selected'));
+  const radio = document.getElementById('pub-' + type);
+  if (radio) {
+    radio.checked = true;
+    radio.closest('.publisher-card').classList.add('selected');
+  }
+  const oauthSec = document.getElementById('oauth-section');
+  oauthSec.style.display = (type === 'api') ? 'block' : 'none';
+  updateOAuthButton();
+  updateActivityNotice();
+}
+
+function updateOAuthButton() {
+  const btn = document.getElementById('btn-oauth');
+  if (btn) btn.disabled = !editingId;
+}
+
+function updateActivityNotice() {
+  const notice = document.getElementById('activity-notice');
+  const pub = document.querySelector('input[name="publisher"]:checked')?.value;
+  if (notice) {
+    notice.style.display = (pub === 'browser' || !pub) ? 'none' : 'block';
+  }
+}
+
+// ── Schedule builder ─────────────────────────────────────────
+function onScheduleTypeChange() {
+  const type = document.getElementById('f-schedule-type').value;
+  document.getElementById('schedule-times-builder').style.display = type === 'times' ? 'block' : 'none';
+  document.getElementById('schedule-cron-builder').style.display  = type === 'cron'  ? 'block' : 'none';
+}
+
+function addTimeSlot(value = '09:00') {
+  const container = document.getElementById('time-slots');
+  const row = document.createElement('div');
+  row.className = 'time-slot-row';
+  row.innerHTML = `<input type="time" class="time-slot-input" value="${value}">
+    <button type="button" class="btn btn-sm btn-danger" onclick="this.parentElement.remove()">✕</button>`;
+  container.appendChild(row);
+}
+
+function getScheduleConfig() {
+  const type = document.getElementById('f-schedule-type').value;
+  const variance = parseInt(document.getElementById('f-variance').value) || 0;
+  if (type === 'cron') {
+    return { cron: document.getElementById('f-cron').value.trim(), variance_minutes: variance };
+  }
+  const times = Array.from(document.querySelectorAll('.time-slot-input'))
+    .map(i => i.value).filter(Boolean);
+  return { times, variance_minutes: variance };
+}
+
+function setScheduleConfig(cfg) {
+  if (!cfg) return;
+  const variance = cfg.variance_minutes ?? 10;
+  document.getElementById('f-variance').value = variance;
+  document.getElementById('variance-label').textContent = variance;
+
+  if (cfg.cron) {
+    document.getElementById('f-schedule-type').value = 'cron';
+    document.getElementById('f-cron').value = cfg.cron;
+    onScheduleTypeChange();
+  } else {
+    document.getElementById('f-schedule-type').value = 'times';
+    document.getElementById('time-slots').innerHTML = '';
+    (cfg.times || ['09:00','14:00','18:00']).forEach(t => addTimeSlot(t));
+    onScheduleTypeChange();
+  }
+}
+
+// ── Activity ─────────────────────────────────────────────────
+function onActivityToggle() {
+  const enabled = document.getElementById('f-social_enabled').checked;
+  document.getElementById('activity-settings').style.display = enabled ? 'block' : 'none';
+}
+
+// ── OAuth ────────────────────────────────────────────────────
+async function connectOAuth() {
+  if (!editingId) return;
+  try {
+    const data = await api(`/api/accounts/${editingId}/oauth/url`);
+    window.open(data.auth_url, '_blank', 'width=600,height=700');
+    setTimeout(() => loadOAuthStatus(editingId), 5000);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function refreshToken() {
+  if (!editingId) return;
+  try {
+    const r = await api(`/api/accounts/${editingId}/oauth/refresh`, 'POST');
+    alert(r.message);
+    await loadOAuthStatus(editingId);
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function loadOAuthStatus(id) {
+  const box = document.getElementById('oauth-status');
+  if (!box) return;
+  try {
+    const a = await api(`/api/accounts/${id}`);
+    if (a.threads_user_id) {
+      const exp = a.token_expires_at ? new Date(a.token_expires_at).toLocaleDateString() : '?';
+      box.innerHTML = `<span class="badge badge-posted">✓ Connected (expires ${exp})</span>`;
+      document.getElementById('btn-refresh-token').style.display = 'inline-block';
+    } else {
+      box.innerHTML = `<span class="badge badge-failed">Not connected</span>`;
+      document.getElementById('btn-refresh-token').style.display = 'none';
     }
+  } catch {}
+}
+
+// ── Manual reply / activity ───────────────────────────────────
+async function sendApiReply() {
+  if (!editingId) return alert('Save the account first');
+  const threadId = document.getElementById('reply-thread-id').value.trim();
+  const text = document.getElementById('reply-text').value.trim();
+  if (!threadId || !text) return alert('Thread ID and reply text are required');
+  try {
+    const r = await api(`/api/content/activity/${editingId}/reply?thread_id=${encodeURIComponent(threadId)}&text=${encodeURIComponent(text)}`, 'POST');
+    alert('Reply sent! Post ID: ' + (r.data?.post_id || '?'));
+    document.getElementById('reply-thread-id').value = '';
+    document.getElementById('reply-text').value = '';
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function runActivityNow() {
+  if (!editingId) return alert('Save the account first');
+  try {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Running…';
+    const r = await api(`/api/content/activity/${editingId}/run`, 'POST');
+    alert('Done: ' + JSON.stringify(r.data));
+  } catch (e) { alert('Error: ' + e.message); }
+  finally {
+    event.target.disabled = false;
+    event.target.textContent = '▶️ Run activity session now';
+  }
+}
+
+// ── Account list ─────────────────────────────────────────────
+async function loadAccounts() {
+  try {
+    const [accounts, workers] = await Promise.all([api('/api/accounts'), api('/api/workers')]);
+    const el = document.getElementById('accounts-list');
+
+    const wMap = Object.fromEntries(workers.map(w => [w.id, w]));
+    const allModels = [...new Set(workers.flatMap(w => w.models_available || []))];
+    const wSelect = document.getElementById('f-llm_worker_id');
+    wSelect.innerHTML = '<option value="">Auto</option>' +
+      workers.map(w => `<option value="${w.id}">${escapeHtml(w.name)}</option>`).join('');
+    const mSelect = document.getElementById('f-llm_model');
+    mSelect.innerHTML = '<option value="">Default</option>' +
+      allModels.map(m => `<option value="${m}">${escapeHtml(m)}</option>`).join('');
+
+    if (!accounts.length) {
+      el.innerHTML = '<p class="empty-state">No accounts yet. Click "+ New Account" to create one.</p>';
+      return;
+    }
+
+    const pubLabel = { api: '🔗 API', browser: '🌐 Browser', mock: '🧪 Mock' };
+    el.innerHTML = `<table>
+      <thead><tr><th>Account</th><th>Publisher</th><th>Schedule</th><th>Activity</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${accounts.map(a => {
+        const pub = a.publisher_type || 'global';
+        const times = a.schedule_config?.times?.join(', ') || a.schedule_config?.cron || '—';
+        const activity = a.social_actions_enabled
+          ? `❤️${a.likes_per_day} 👤${a.follows_per_day} 💬${a.replies_per_day}`
+          : '<span style="color:#666">off</span>';
+        return `<tr>
+          <td><strong>${escapeHtml(a.username)}</strong><br><small>${escapeHtml(a.display_name||'')}</small></td>
+          <td>${pubLabel[pub] || pub}</td>
+          <td><small>${escapeHtml(times)}</small></td>
+          <td><small>${activity}</small></td>
+          <td><span class="badge ${a.is_active?'badge-posted':'badge-failed'}">${a.is_active?'active':'paused'}</span></td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="editAccount(${a.id})">Edit</button>
+            <button class="btn btn-sm ${a.is_active?'btn-warning':'btn-primary'}" onclick="toggleAccount(${a.id},${a.is_active})">
+              ${a.is_active?'Pause':'Resume'}
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="deleteAccount(${a.id})">Del</button>
+          </td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  } catch(e) { console.error(e); }
 }
 
 function showCreateModal() {
-    editingId = null;
-    document.getElementById('modal-title').textContent = 'New Account';
-    document.getElementById('account-form').reset();
-    document.getElementById('f-language').value = 'en';
-    document.getElementById('f-timezone').value = 'UTC';
-    document.getElementById('f-schedule').value = '09:00,14:00,18:00';
-    document.getElementById('f-max_posts').value = '3';
-    document.getElementById('account-modal').style.display = 'flex';
+  editingId = null;
+  document.getElementById('modal-title').textContent = 'New Account';
+  document.getElementById('account-form').reset();
+  document.getElementById('time-slots').innerHTML = '';
+  ['09:00','14:00','18:00'].forEach(t => addTimeSlot(t));
+  onScheduleTypeChange();
+  selectPublisher('api');
+  document.getElementById('activity-settings').style.display = 'none';
+  document.getElementById('oauth-status').innerHTML = '<span class="badge badge-failed">Not connected</span>';
+  document.getElementById('btn-refresh-token').style.display = 'none';
+  updateOAuthButton();
+  document.getElementById('account-modal').style.display = 'flex';
+  switchTab('tab-general', document.querySelector('.tab-btn'));
 }
 
 async function editAccount(id) {
-    const a = await api(`/api/accounts/${id}`);
-    editingId = id;
-    document.getElementById('modal-title').textContent = 'Edit Account';
-    document.getElementById('f-id').value = id;
-    document.getElementById('f-username').value = a.username;
-    document.getElementById('f-display_name').value = a.display_name || '';
-    document.getElementById('f-language').value = a.language || 'en';
-    document.getElementById('f-timezone').value = a.timezone || 'UTC';
-    document.getElementById('f-topics').value = (a.topics || []).join(', ');
-    document.getElementById('f-tone').value = a.tone || '';
-    document.getElementById('f-target_audience').value = a.target_audience || '';
-    document.getElementById('f-llm_model').value = a.llm_model || '';
-    document.getElementById('f-llm_worker_id').value = a.llm_worker_id || '';
-    document.getElementById('f-schedule').value = (a.schedule_config?.times || []).join(',');
-    document.getElementById('f-max_posts').value = a.max_posts_per_day || 3;
-    document.getElementById('account-modal').style.display = 'flex';
+  editingId = id;
+  const a = await api(`/api/accounts/${id}`);
+  document.getElementById('modal-title').textContent = 'Edit Account — ' + a.username;
+  document.getElementById('f-id').value = id;
+  document.getElementById('f-username').value = a.username;
+  document.getElementById('f-display_name').value = a.display_name || '';
+  document.getElementById('f-language').value = a.language || 'en';
+  document.getElementById('f-timezone').value = a.timezone || 'UTC';
+  document.getElementById('f-topics').value = (a.topics||[]).join(', ');
+  document.getElementById('f-tone').value = a.tone || '';
+  document.getElementById('f-target_audience').value = a.target_audience || '';
+  document.getElementById('f-base_hashtags').value = (a.base_hashtags||[]).join(', ');
+  document.getElementById('f-min_length').value = a.min_length || 50;
+  document.getElementById('f-max_length').value = a.max_length || 500;
+  document.getElementById('f-max_posts').value = a.max_posts_per_day || 3;
+  document.getElementById('f-llm_model').value = a.llm_model || '';
+  document.getElementById('f-llm_worker_id').value = a.llm_worker_id || '';
+  document.getElementById('f-social_enabled').checked = !!a.social_actions_enabled;
+  document.getElementById('f-likes_per_day').value = a.likes_per_day ?? 20;
+  document.getElementById('f-replies_per_day').value = a.replies_per_day ?? 5;
+  document.getElementById('f-follows_per_day').value = a.follows_per_day ?? 10;
+  onActivityToggle();
+  setScheduleConfig(a.schedule_config);
+  selectPublisher(a.publisher_type || 'api');
+  await loadOAuthStatus(id);
+  document.getElementById('account-modal').style.display = 'flex';
+  switchTab('tab-general', document.querySelector('.tab-btn'));
 }
 
 function closeModal() {
-    document.getElementById('account-modal').style.display = 'none';
+  document.getElementById('account-modal').style.display = 'none';
 }
 
 async function saveAccount(e) {
-    e.preventDefault();
-    const topics = document.getElementById('f-topics').value.split(',').map(t => t.trim()).filter(Boolean);
-    const times = document.getElementById('f-schedule').value.split(',').map(t => t.trim()).filter(Boolean);
-    const workerId = document.getElementById('f-llm_worker_id').value;
-    const llmModel = document.getElementById('f-llm_model').value;
-    
-    const data = {
-        username: document.getElementById('f-username').value,
-        display_name: document.getElementById('f-display_name').value || null,
-        language: document.getElementById('f-language').value,
-        timezone: document.getElementById('f-timezone').value,
-        topics: topics,
-        tone: document.getElementById('f-tone').value || null,
-        target_audience: document.getElementById('f-target_audience').value || null,
-        schedule_type: 'times',
-        schedule_config: { times: times },
-        max_posts_per_day: parseInt(document.getElementById('f-max_posts').value),
-        llm_model: llmModel || null,
-        llm_worker_id: workerId ? parseInt(workerId) : null,
-    };
-    
-    try {
-        if (editingId) {
-            await api(`/api/accounts/${editingId}`, 'PUT', data);
-        } else {
-            await api('/api/accounts', 'POST', data);
-        }
-        closeModal();
-        loadAccounts();
-    } catch (e) {
-        alert('Error: ' + e.message);
+  e.preventDefault();
+  const schedCfg = getScheduleConfig();
+  const topics = document.getElementById('f-topics').value.split(',').map(t=>t.trim()).filter(Boolean);
+  const baseHashtags = document.getElementById('f-base_hashtags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  const pub = document.querySelector('input[name="publisher"]:checked')?.value || null;
+  const data = {
+    username: document.getElementById('f-username').value,
+    display_name: document.getElementById('f-display_name').value || null,
+    language: document.getElementById('f-language').value,
+    timezone: document.getElementById('f-timezone').value,
+    topics, base_hashtags: baseHashtags,
+    tone: document.getElementById('f-tone').value || null,
+    target_audience: document.getElementById('f-target_audience').value || null,
+    min_length: parseInt(document.getElementById('f-min_length').value),
+    max_length: parseInt(document.getElementById('f-max_length').value),
+    schedule_type: schedCfg.cron ? 'cron' : 'times',
+    schedule_config: schedCfg,
+    max_posts_per_day: parseInt(document.getElementById('f-max_posts').value),
+    llm_model: document.getElementById('f-llm_model').value || null,
+    llm_worker_id: document.getElementById('f-llm_worker_id').value ? parseInt(document.getElementById('f-llm_worker_id').value) : null,
+    publisher_type: pub,
+    social_actions_enabled: document.getElementById('f-social_enabled').checked,
+    likes_per_day: parseInt(document.getElementById('f-likes_per_day').value),
+    replies_per_day: parseInt(document.getElementById('f-replies_per_day').value),
+    follows_per_day: parseInt(document.getElementById('f-follows_per_day').value),
+  };
+  try {
+    if (editingId) {
+      await api(`/api/accounts/${editingId}`, 'PUT', data);
+    } else {
+      const created = await api('/api/accounts', 'POST', data);
+      editingId = created.id;
     }
+    closeModal();
+    loadAccounts();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function toggleAccount(id, isActive) {
+  await api(`/api/accounts/${id}`, 'PUT', { is_active: !isActive });
+  loadAccounts();
 }
 
 async function deleteAccount(id) {
-    if (!confirm('Delete this account and all its posts?')) return;
-    await api(`/api/accounts/${id}`, 'DELETE');
-    loadAccounts();
+  if (!confirm('Delete account and all its posts?')) return;
+  await api(`/api/accounts/${id}`, 'DELETE');
+  loadAccounts();
 }
 
+// ── Init ─────────────────────────────────────────────────────
 loadAccounts();
 </script>
+
+<style>
+.modal-wide { max-width: 720px; width: 96vw; }
+.modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem; }
+.modal-close { background:none; border:none; font-size:1.2rem; cursor:pointer; color:var(--text-muted); }
+.tab-bar { display:flex; gap:.25rem; border-bottom:1px solid var(--border); margin-bottom:1rem; padding-bottom:.25rem; }
+.tab-btn { background:none; border:none; padding:.4rem .8rem; cursor:pointer; color:var(--text-muted); border-radius:6px 6px 0 0; font-size:.85rem; }
+.tab-btn.active { color:var(--accent); border-bottom:2px solid var(--accent); font-weight:600; }
+.tab-pane { display:none; } .tab-pane.active { display:block; }
+.section-divider { font-size:.75rem; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin:1.2rem 0 .6rem; border-top:1px solid var(--border); padding-top:.6rem; }
+.publisher-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin:.5rem 0 1rem; }
+.publisher-card { border:2px solid var(--border); border-radius:10px; padding:.75rem; cursor:pointer; transition:border-color .2s; }
+.publisher-card input { display:none; }
+.publisher-card.selected, .publisher-card:has(input:checked) { border-color:var(--accent); background:rgba(99,102,241,.07); }
+.pub-icon { font-size:1.5rem; margin-bottom:.25rem; }
+.pub-title { font-weight:600; font-size:.9rem; margin-bottom:.25rem; }
+.pub-desc { font-size:.75rem; color:var(--text-muted); line-height:1.4; }
+.oauth-box { background:var(--surface-2,rgba(255,255,255,.04)); border:1px solid var(--border); border-radius:8px; padding:.75rem 1rem; margin-top:.75rem; }
+.oauth-actions { display:flex; gap:.5rem; align-items:center; margin:.5rem 0; }
+.hint { font-size:.75rem; color:var(--text-muted); margin:.25rem 0 0; }
+.hint-inline { font-size:.75rem; color:var(--text-muted); }
+.time-slot-row { display:flex; gap:.5rem; align-items:center; margin-bottom:.4rem; }
+.time-slot-input { padding:.3rem .5rem; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); }
+.activity-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:.75rem; margin:.5rem 0 1rem; }
+.activity-card { border:1px solid var(--border); border-radius:8px; padding:.75rem; }
+.activity-card-header { display:flex; align-items:center; gap:.4rem; margin-bottom:.4rem; }
+.activity-icon { font-size:1.1rem; }
+.activity-desc { font-size:.78rem; color:var(--text-muted); margin-bottom:.6rem; line-height:1.4; }
+.activity-notice { background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3); border-radius:6px; padding:.5rem .75rem; font-size:.82rem; margin-bottom:1rem; }
+.toggle-row { display:flex; align-items:center; justify-content:space-between; }
+.toggle { position:relative; display:inline-block; width:44px; height:24px; }
+.toggle input { display:none; }
+.slider { position:absolute; inset:0; background:#555; border-radius:24px; transition:.3s; cursor:pointer; }
+.slider::before { content:""; position:absolute; width:18px; height:18px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.3s; }
+.toggle input:checked + .slider { background:var(--accent); }
+.toggle input:checked + .slider::before { transform:translateX(20px); }
+.btn-warning { background:#d97706; color:#fff; } .btn-warning:hover { background:#b45309; }
+</style>
 {% endblock %}

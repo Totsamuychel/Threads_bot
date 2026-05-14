@@ -14,17 +14,17 @@ def get_publisher(
     publisher_type: Optional[str] = None,
     db: Optional[AsyncSession] = None,
 ) -> BasePublisher:
-    """Return the configured publisher instance."""
-    publisher_type = publisher_type or settings.threads_publisher
+    """Return publisher instance — account-level type takes priority over global config."""
+    ptype = (publisher_type or settings.threads_publisher).lower()
 
-    if publisher_type.lower() == "mock":
+    if ptype == "mock":
         return MockPublisher()
-    elif publisher_type.lower() == "api":
+    elif ptype == "api":
         return ThreadsAPIPublisher(db=db)
-    elif publisher_type.lower() == "browser":
+    elif ptype == "browser":
         return BrowserPublisher()
     else:
-        raise ValueError(f"Unknown publisher type: {publisher_type}")
+        raise ValueError(f"Unknown publisher type: {ptype}")
 
 
 __all__ = [

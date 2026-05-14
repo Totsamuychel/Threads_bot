@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+import random
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, and_, delete
 from app.database import AsyncSessionLocal
@@ -9,6 +10,7 @@ from app.models import Account, ContentPlan, Post, ActivityLog
 from app.models.content import PostStatus
 from app.services import ContentPlanner, PostGenerator, PostPublisher
 from app.services.notifier import notifier
+from app.services.social_actions import SocialActionsService
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -202,6 +204,40 @@ async def retry_failed_posts():
             
         except Exception as e:
             logger.error(f"Error in retry task: {str(e)}")
+
+
+async def run_social_actions():
+    """
+    Scheduled task to perform social interactions (likes, replies, follows).
+    Runs every 3 hours for all active accounts with social_actions_enabled.
+    """
+    logger.info("Running social actions task")
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(Account).where(
+                    and_(Account.is_active == True, Account.social_actions_enabled == True)
+                )
+            )
+            accounts = result.scalars().all()
+
+            if not accounts:
+                logger.debug("No accounts with social actions enabled")
+                return
+
+            for account in accounts:
+                try:
+                    service = SocialActionsService(db, account.id)
+                    stats = await service.run()
+                    logger.info("Social actions for account %s: %s", account.id, stats)
+                    # Small pause between accounts
+                    await asyncio.sleep(random.uniform(30, 90))
+                except Exception as e:
+                    logger.error("Social actions error for account %s: %s", account.id, e)
+
+        except Exception as e:
+            logger.error("Error in social actions task: %s", e)
 
 
 async def cleanup_old_logs():

@@ -9,7 +9,8 @@ from app.scheduler.tasks import (
     generate_posts_for_upcoming,
     publish_scheduled_posts,
     retry_failed_posts,
-    cleanup_old_logs
+    cleanup_old_logs,
+    run_social_actions,
 )
 from app.config import settings
 
@@ -65,6 +66,15 @@ def init_scheduler() -> AsyncIOScheduler:
         replace_existing=True
     )
     
+    # Social actions (likes, replies, follows) - every 3 hours
+    scheduler.add_job(
+        run_social_actions,
+        trigger=IntervalTrigger(hours=3),
+        id="social_actions",
+        name="Perform social interactions (likes/replies/follows)",
+        replace_existing=True
+    )
+
     # Cleanup old logs - daily at 3 AM
     scheduler.add_job(
         cleanup_old_logs,

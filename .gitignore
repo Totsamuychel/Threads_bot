@@ -57,9 +57,8 @@ Thumbs.db
 htmlcov/
 .tox/
 
-# Alembic
-alembic/versions/*.py
-!alembic/versions/.gitkeep
+# Alembic — track migration scripts
+# (previously ignored by mistake)
 
 # Temporary files
 *.tmp
