@@ -274,8 +274,6 @@ class BrowserPublisher(BasePublisher):
             headless=settings.browser_headless,
             user_agent=_USER_AGENT,
             viewport={"width": _VW, "height": _VH},
-            locale="ru-RU",
-            timezone_id="Europe/Moscow",
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-automation",
@@ -324,12 +322,44 @@ class BrowserPublisher(BasePublisher):
         await page.close()
 
     async def _is_logged_in(self, page) -> bool:
-        # Навигационные табы "For you" / "Для вас" / "Home" есть только в ленте
+        # 1. URL-проверка: если открылась /login — точно не авторизован
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        except Exception:
+            pass
+        url = page.url
+        if "/login" in url or "instagram.com" in url:
+            return False
+
+        # 2. CSS-селекторы навигации (любой язык интерфейса)
+        nav_selectors = (
+            '[aria-label="For you"], [aria-label="Home"], '
+            '[aria-label="Для вас"], [aria-label="Головна"], '
+            '[aria-label="Для тебя"], [aria-label="Главная"], '
+            'a[href="/"][role="link"], '
+            '[data-testid="tray-home"], [data-testid="tray-feed"]'
+        )
+        try:
+            await page.wait_for_selector(nav_selectors, timeout=10_000)
+            return True
+        except Exception:
+            pass
+
+        # 3. VisionAgent — визуальная проверка
+        if self._vision:
+            try:
+                return await self._vision.verify(
+                    page, "Is the user logged in to Threads? (Is the main feed visible?)"
+                )
+            except Exception:
+                pass
+
+        # 4. Compose-поле как последняя эвристика
         try:
             await page.wait_for_selector(
-                '[aria-label="For you"], [aria-label="Home"], '
-                '[aria-label="Для вас"], [aria-label="Головна"]',
-                timeout=15_000,
+                '[aria-label*="text field"], [aria-label*="New thread"], '
+                '[contenteditable="true"]',
+                timeout=5_000,
             )
             return True
         except Exception:
@@ -375,9 +405,11 @@ class BrowserPublisher(BasePublisher):
             logger.info("VisionAgent ищет поле создания поста...")
             compose_xy = await vision.find(
                 page,
-                "the text input area at the top of the feed for writing a new post "
-                "(usually says 'What's new?', 'Что нового?' or 'Що нового?'). "
-                "It has a 'Post' or 'Опубликовать' button next to it.",
+                "the compose/create post area at the top of the Threads feed. "
+                "It is a clickable area that looks like an empty text input, "
+                "often with a user avatar on the left. It may show placeholder "
+                "text like 'Empty text field' or 'Start a thread'. "
+                "It is located in the upper portion of the main content area.",
             )
             if compose_xy:
                 logger.info("VisionAgent нашёл compose: %s", compose_xy)
@@ -473,15 +505,21 @@ class BrowserPublisher(BasePublisher):
 # ---------------------------------------------------------------------------
 
 def _compose_sel() -> str:
-    # Inline compose field on the main feed (confirmed via DOM inspection)
-    return 'div[role="button"][aria-label*="Empty text field"]'
+    return (
+        'div[role="button"][aria-label*="Empty text field"], '
+        'div[role="button"][aria-label*="текстовое поле"], '
+        'div[role="button"][aria-label*="Новая публикация"], '
+        'div[role="button"][aria-label*="New post"]'
+    )
 
 
 def _editor_sel() -> str:
-    # Appears after clicking compose (confirmed via DOM inspection)
-    return 'div[contenteditable="true"][role="textbox"]'
+    return 'div[contenteditable="true"][role="textbox"], div[contenteditable="true"]'
 
 
 def _post_btn_sel() -> str:
-    # First Post button in DOM belongs to compose area (confirmed via DOM order)
-    return 'div[role="button"]:has-text("Post")'
+    return (
+        'div[role="button"]:has-text("Post"), '
+        'div[role="button"]:has-text("Опубликовать"), '
+        'button:has-text("Post"), button:has-text("Опубликовать")'
+    )

@@ -138,19 +138,26 @@ class VisionAgent:
     @staticmethod
     def _parse_coords(text: str) -> Optional[tuple[float, float]]:
         """Извлекает {"x": ..., "y": ...} из ответа модели."""
-        # Убираем markdown-блоки если есть
         text = re.sub(r"```[a-z]*\s*", "", text).strip()
 
-        # Ищем JSON-объект
+        # Попытка 1: честный JSON
         match = re.search(r'\{[^}]+\}', text)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group())
-            x = data.get("x")
-            y = data.get("y")
-            if x is None or y is None:
-                return None
-            return float(x), float(y)
-        except (json.JSONDecodeError, ValueError, TypeError):
-            return None
+        if match:
+            try:
+                data = json.loads(match.group())
+                x = data.get("x")
+                y = data.get("y")
+                if x is not None and y is not None:
+                    return float(x), float(y)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+
+        # Попытка 2: regex — модель иногда пропускает кавычки вокруг ключей
+        m = re.search(r'"?x"?\s*[=:]\s*(\d+(?:\.\d+)?)\D+"?y"?\s*[=:]\s*(\d+(?:\.\d+)?)', text)
+        if m:
+            try:
+                return float(m.group(1)), float(m.group(2))
+            except ValueError:
+                pass
+
+        return None

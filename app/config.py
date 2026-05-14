@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     browser_login_timeout: int = 60
 
     # Vision agent (Qwen VL через Ollama)
-    vision_model: str = "qwen2-vl"
+    vision_model: str = "qwen2.5vl:7b"
     vision_base_url: str = "http://localhost:11434"
     vision_timeout: int = 60
     
