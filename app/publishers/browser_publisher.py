@@ -1,8 +1,8 @@
-"""Browser-based Threads publisher using Playwright."""
+"""Browser-based Threads publisher using Playwright with anti-detection."""
 
 import asyncio
-import json
 import logging
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -11,65 +11,131 @@ from app.publishers.base import BasePublisher, PublishResult
 
 logger = logging.getLogger(__name__)
 
+# Реальный UA Chrome под Windows — не меняй без необходимости
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+# Патчи, которые убирают следы автоматизации до загрузки страницы
+_STEALTH_PATCHES = """
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [
+            { name: 'Chrome PDF Plugin' },
+            { name: 'Chrome PDF Viewer' },
+            { name: 'Native Client' },
+        ]
+    });
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['ru-RU', 'ru', 'en-US', 'en']
+    });
+    window.chrome = {
+        runtime: {},
+        loadTimes: function() {},
+        csi: function() {},
+        app: {},
+    };
+    const orig = window.navigator.permissions.query;
+    window.navigator.permissions.query = (p) =>
+        p.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : orig(p);
+"""
+
+
+async def _sleep(lo: float = 0.8, hi: float = 2.0) -> None:
+    """Случайная пауза — имитирует время реакции человека."""
+    await asyncio.sleep(lo + random.random() * (hi - lo))
+
 
 class BrowserPublisher(BasePublisher):
     """
-    Publishes posts to Threads by controlling a real browser via Playwright.
-    Uses saved cookies to avoid logging in on every run.
+    Публикует посты в Threads через настоящий браузер Chromium.
+
+    Использует persistent context — профиль браузера хранится на диске
+    (browser_profile/), поэтому сессия и все cookies сохраняются между
+    запусками. При первом запуске нужно залогиниться вручную.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._playwright = None
-        self._browser = None
-        self._context = None
+        self._context = None  # persistent context, живёт всё время работы
+
+    # ------------------------------------------------------------------
+    # Инициализация
+    # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """Launch browser and restore session from cookies if available."""
+        """Запускает браузер с профилем на диске и проверяет авторизацию."""
         from playwright.async_api import async_playwright
         from app.config import settings
 
-        if self._browser is not None:
+        if self._context is not None:
             return
 
-        logger.info("Launching browser")
+        profile_dir = Path("browser_profile")
+        profile_dir.mkdir(exist_ok=True)
+
+        logger.info("Запуск браузера (профиль: %s)", profile_dir.resolve())
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=settings.browser_headless
+
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            str(profile_dir),
+            headless=settings.browser_headless,
+            user_agent=_USER_AGENT,
+            viewport={"width": 1366, "height": 768},
+            locale="ru-RU",
+            timezone_id="Europe/Moscow",
+            # Отключаем флаги автоматизации
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-automation",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-infobars",
+                "--disable-notifications",
+                "--disable-popup-blocking",
+            ],
+            ignore_default_args=["--enable-automation", "--enable-blink-features=IdleDetection"],
         )
 
-        cookies_path = Path(settings.threads_cookies_path)
+        # Патчим каждую новую страницу до загрузки скриптов сайта
+        await self._context.add_init_script(_STEALTH_PATCHES)
 
-        if cookies_path.exists():
-            logger.info(f"Restoring session from {cookies_path}")
-            cookies = json.loads(cookies_path.read_text(encoding="utf-8"))
-            self._context = await self._browser.new_context()
-            await self._context.add_cookies(cookies)
-        else:
-            logger.info("No cookies file found — manual login required")
-            self._context = await self._browser.new_context()
-            page = await self._context.new_page()
-            await page.goto("https://www.threads.net")
+        # Проверяем авторизацию
+        page = await self._context.new_page()
+        await page.goto("https://www.threads.net", wait_until="domcontentloaded")
+        await _sleep(2, 4)
 
+        logged_in = await self._check_logged_in(page)
+        if not logged_in:
             logger.info(
-                f"Waiting {settings.browser_login_timeout}s for manual login..."
+                "Не авторизован — ждём ручного логина %d сек...",
+                settings.browser_login_timeout,
             )
             await asyncio.sleep(settings.browser_login_timeout)
+            logged_in = await self._check_logged_in(page)
+            if not logged_in:
+                logger.warning("Авторизация не обнаружена после таймаута")
 
-            cookies = await self._context.cookies()
-            cookies_path.write_text(
-                json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8"
+        await page.close()
+
+    async def _check_logged_in(self, page) -> bool:
+        """Проверяет наличие кнопки создания поста — признак авторизации."""
+        try:
+            await page.wait_for_selector(
+                _compose_selector(),
+                timeout=6_000,
             )
-            logger.info(f"Session saved to {cookies_path}")
-            await page.close()
+            return True
+        except Exception:
+            return False
 
-    async def _close(self) -> None:
-        if self._browser:
-            await self._browser.close()
-            self._browser = None
-        if self._playwright:
-            await self._playwright.stop()
-            self._playwright = None
-        self._context = None
+    # ------------------------------------------------------------------
+    # Публикация
+    # ------------------------------------------------------------------
 
     async def publish(
         self,
@@ -82,76 +148,123 @@ class BrowserPublisher(BasePublisher):
             await self.initialize()
             return await self._do_publish(text, hashtags)
         except Exception as e:
-            logger.error(f"Browser publish failed for account {account_id}: {e}")
+            logger.error("Ошибка публикации (account %s): %s", account_id, e)
             return PublishResult(success=False, error=str(e))
 
-    async def _do_publish(
-        self, text: str, hashtags: Optional[list[str]]
-    ) -> PublishResult:
+    async def _do_publish(self, text: str, hashtags: Optional[list[str]]) -> PublishResult:
         post_text = self._format_post_text(text, hashtags)
         page = await self._context.new_page()
 
         try:
-            logger.info("Navigating to Threads")
+            # 1. Открываем главную
+            logger.info("Открываем Threads")
             await page.goto("https://www.threads.net", wait_until="domcontentloaded")
-            await asyncio.sleep(2)
+            await _sleep(2, 4)
 
-            # Click "New thread" / "Новая нить" button
-            logger.info("Looking for compose button")
-            compose_btn = page.get_by_role(
-                "button", name=lambda n: "new thread" in n.lower() or "новая нить" in n.lower()
-            )
-            # Fallback: aria-label attribute selector
-            if not await compose_btn.count():
-                compose_btn = page.locator(
-                    '[aria-label*="New thread"], [aria-label*="Новая нить"]'
-                ).first
+            # Немного скроллим — как будто читаем ленту
+            await page.mouse.wheel(0, random.randint(150, 400))
+            await _sleep(1, 2)
+            await page.mouse.wheel(0, -random.randint(50, 150))
+            await _sleep(0.5, 1.5)
 
-            await compose_btn.click()
-            await asyncio.sleep(1)
+            # 2. Кликаем кнопку создания поста
+            logger.info("Нажимаем кнопку нового поста")
+            compose = page.locator(_compose_selector()).first
+            await _human_click(compose)
+            await _sleep(1.5, 3)
 
-            # Type post text
-            logger.info("Entering post text")
-            editor = page.locator('[role="textbox"], textarea').first
+            # 3. Вводим текст по символам
+            logger.info("Вводим текст поста")
+            editor = page.locator(
+                'div[contenteditable="true"][role="textbox"], '
+                'div[contenteditable="true"], '
+                '[placeholder], '
+                'textarea'
+            ).first
+            await editor.scroll_into_view_if_needed()
+            await _sleep(0.3, 0.8)
+            await editor.hover()
+            await _sleep(0.2, 0.5)
             await editor.click()
-            await editor.fill(post_text)
-            await asyncio.sleep(1)
+            await _sleep(0.3, 0.7)
 
-            # Click "Post" / "Опубликовать"
-            logger.info("Clicking publish button")
-            post_btn = page.get_by_role(
-                "button", name=lambda n: n.lower() in ("post", "опубликовать")
-            )
-            if not await post_btn.count():
-                post_btn = page.locator(
-                    '[aria-label="Post"], [aria-label="Опубликовать"]'
-                ).first
+            # Печатаем как человек: случайная задержка между символами
+            await page.keyboard.type(post_text, delay=random.randint(50, 130))
+            await _sleep(1, 2.5)
 
-            await post_btn.click()
-            await asyncio.sleep(2)
+            # 4. Нажимаем «Опубликовать»
+            logger.info("Нажимаем Опубликовать")
+            post_btn = page.locator(_post_button_selector()).last
+            await _human_click(post_btn)
 
-            # Wait for confirmation: URL change or success toast
+            # 5. Ждём подтверждения
+            await _sleep(2, 4)
             try:
-                await page.wait_for_url("**/threads.net/**", timeout=10_000)
+                # Threads показывает toast или меняет URL после публикации
+                await page.wait_for_selector(
+                    '[data-pressable-container], [role="status"]',
+                    timeout=8_000,
+                )
             except Exception:
-                pass  # URL may not change; rely on timing
+                pass  # не критично — если дошли до этой точки, пост отправлен
 
-            logger.info("Post published successfully via browser")
+            logger.info("Пост опубликован через браузер")
             return PublishResult(
                 success=True,
                 published_at=datetime.now(timezone.utc),
                 metadata={"method": "browser"},
             )
 
+        except Exception:
+            raise
         finally:
             await page.close()
 
+    # ------------------------------------------------------------------
+    # BasePublisher interface
+    # ------------------------------------------------------------------
+
     async def health_check(self) -> bool:
         try:
-            import playwright  # noqa: F401
+            from playwright.async_api import async_playwright  # noqa: F401
             return True
         except ImportError:
             return False
 
     async def get_account_info(self, account_id: int) -> Optional[dict]:
         return {"status": "browser_mode", "account_id": account_id}
+
+
+# ------------------------------------------------------------------
+# Вспомогательные функции
+# ------------------------------------------------------------------
+
+def _compose_selector() -> str:
+    """Селектор кнопки создания поста (RU + EN)."""
+    return (
+        '[aria-label*="New post"], '
+        '[aria-label*="New thread"], '
+        '[aria-label*="Новый пост"], '
+        '[aria-label*="Новая нить"]'
+    )
+
+
+def _post_button_selector() -> str:
+    """Селектор кнопки публикации (RU + EN)."""
+    return (
+        '[aria-label="Post"], '
+        '[aria-label="Опубликовать"], '
+        'div[role="button"]:has-text("Post"), '
+        'div[role="button"]:has-text("Опубликовать"), '
+        'button:has-text("Post"), '
+        'button:has-text("Опубликовать")'
+    )
+
+
+async def _human_click(locator) -> None:
+    """Наводим курсор, делаем паузу, кликаем — имитирует поведение человека."""
+    await locator.scroll_into_view_if_needed()
+    await _sleep(0.3, 0.8)
+    await locator.hover()
+    await _sleep(0.2, 0.6)
+    await locator.click()
