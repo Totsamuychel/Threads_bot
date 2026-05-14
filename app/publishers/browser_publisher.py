@@ -1,7 +1,8 @@
-"""Browser-based Threads publisher using Playwright with anti-detection."""
+"""Browser-based Threads publisher — Playwright + human mouse simulation."""
 
 import asyncio
 import logging
+import math
 import random
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,14 +12,12 @@ from app.publishers.base import BasePublisher, PublishResult
 
 logger = logging.getLogger(__name__)
 
-# Реальный UA Chrome под Windows — не меняй без необходимости
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-# Патчи, которые убирают следы автоматизации до загрузки страницы
 _STEALTH_PATCHES = """
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     Object.defineProperty(navigator, 'plugins', {
@@ -32,43 +31,230 @@ _STEALTH_PATCHES = """
         get: () => ['ru-RU', 'ru', 'en-US', 'en']
     });
     window.chrome = {
-        runtime: {},
-        loadTimes: function() {},
-        csi: function() {},
-        app: {},
+        runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}
     };
-    const orig = window.navigator.permissions.query;
+    const _origPerms = window.navigator.permissions.query;
     window.navigator.permissions.query = (p) =>
         p.name === 'notifications'
             ? Promise.resolve({ state: Notification.permission })
-            : orig(p);
+            : _origPerms(p);
 """
 
+_VW = 1366  # viewport width
+_VH = 768   # viewport height
 
-async def _sleep(lo: float = 0.8, hi: float = 2.0) -> None:
-    """Случайная пауза — имитирует время реакции человека."""
-    await asyncio.sleep(lo + random.random() * (hi - lo))
 
+# ---------------------------------------------------------------------------
+# Human Mouse — плавное движение по кривым Безье
+# ---------------------------------------------------------------------------
+
+class HumanMouse:
+    """
+    Имитирует движение мыши живого человека:
+    - Кубическая кривая Безье со случайными контрольными точками
+    - Easing (smoothstep): медленно стартует, разгоняется, притормаживает
+    - Микро-дрожание (гауссов шум) — как дрожит рука
+    - Иногда промахивается мимо цели и возвращается
+    - Может хаотично блуждать по странице во время «чтения»
+    """
+
+    def __init__(self) -> None:
+        # Стартуем из центра экрана
+        self.x: float = _VW / 2
+        self.y: float = _VH / 2
+
+    # ------------------------------------------------------------------
+    # Внутренние вычисления
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _smoothstep(t: float) -> float:
+        """Ease in-out: плавный старт и конец движения."""
+        return t * t * (3.0 - 2.0 * t)
+
+    @staticmethod
+    def _bezier(t: float, p0: float, p1: float, p2: float, p3: float) -> float:
+        """Значение кубической кривой Безье в точке t ∈ [0, 1]."""
+        u = 1.0 - t
+        return u**3 * p0 + 3*u**2*t * p1 + 3*u*t**2 * p2 + t**3 * p3
+
+    # ------------------------------------------------------------------
+    # Основное движение
+    # ------------------------------------------------------------------
+
+    async def move_to(
+        self,
+        page,
+        tx: float,
+        ty: float,
+        overshoot: bool = True,
+    ) -> None:
+        """
+        Плавно перемещает курсор из текущей позиции в (tx, ty).
+        Путь — кубическая кривая Безье с хаотичными контрольными точками.
+        """
+        sx, sy = self.x, self.y
+        dist = math.hypot(tx - sx, ty - sy)
+
+        if dist < 2:
+            return
+
+        # Контрольные точки — смещаем в сторону от прямой, создавая дугу
+        spread = min(dist * 0.45, 140)
+        cp1x = sx + (tx - sx) * random.uniform(0.15, 0.35) + random.uniform(-spread, spread)
+        cp1y = sy + (ty - sy) * random.uniform(0.15, 0.35) + random.uniform(-spread, spread)
+        cp2x = sx + (tx - sx) * random.uniform(0.65, 0.85) + random.uniform(-spread, spread)
+        cp2y = sy + (ty - sy) * random.uniform(0.65, 0.85) + random.uniform(-spread, spread)
+
+        # Иногда промахиваемся мимо цели и чуть возвращаемся назад
+        real_tx, real_ty = tx, ty
+        if overshoot and dist > 30 and random.random() < 0.35:
+            angle = math.atan2(ty - sy, tx - sx)
+            over = random.uniform(4, 15)
+            tx += math.cos(angle) * over
+            ty += math.sin(angle) * over
+
+        # Количество шагов: ~1 шаг на 5–8 пикселей, минимум 18
+        steps = max(18, int(dist / random.uniform(5, 8)))
+
+        for i in range(steps + 1):
+            t_raw = i / steps
+            t_ease = self._smoothstep(t_raw)
+
+            x = self._bezier(t_ease, sx, cp1x, cp2x, tx)
+            y = self._bezier(t_ease, sy, cp1y, cp2y, ty)
+
+            # Микро-дрожание руки (усиливается чуть сильнее на высокой скорости)
+            jitter = 0.3 + 0.5 * (1 - abs(t_raw - 0.5) * 2)
+            x += random.gauss(0, jitter)
+            y += random.gauss(0, jitter)
+
+            await page.mouse.move(x, y)
+
+            # Задержка: в середине движения быстрее, на краях медленнее
+            mid_speed = 1.0 - abs(t_raw - 0.5) * 1.6  # 0.2 .. 1.0
+            base_delay = 0.003 + random.gauss(0, 0.0008)
+            await asyncio.sleep(max(0.001, base_delay / max(mid_speed, 0.15)))
+
+        # Корректируем промах — плавно возвращаемся к реальной цели
+        if overshoot and (tx != real_tx or ty != real_ty):
+            await self.move_to(page, real_tx, real_ty, overshoot=False)
+
+        self.x, self.y = real_tx, real_ty
+
+    # ------------------------------------------------------------------
+    # Блуждание — имитирует «чтение» страницы
+    # ------------------------------------------------------------------
+
+    async def wander(self, page, duration: float) -> None:
+        """
+        Хаотично водит мышью по странице в течение `duration` секунд —
+        как будто пользователь читает ленту.
+        """
+        deadline = asyncio.get_event_loop().time() + duration
+        while asyncio.get_event_loop().time() < deadline:
+            # Следующая случайная точка в пределах viewport
+            nx = random.uniform(80, _VW - 80)
+            ny = random.uniform(60, _VH - 80)
+            await self.move_to(page, nx, ny)
+
+            # Иногда зависаем — как будто читаем пост
+            if random.random() < 0.45:
+                pause = random.uniform(0.3, 1.8)
+                # Во время паузы слегка дёргаем мышь (микро-движения)
+                await self._micro_idle(page, pause)
+
+    async def _micro_idle(self, page, duration: float) -> None:
+        """Маленькие хаотичные движения во время остановки (рука не стоит ровно)."""
+        deadline = asyncio.get_event_loop().time() + duration
+        while asyncio.get_event_loop().time() < deadline:
+            dx = random.gauss(0, 2.5)
+            dy = random.gauss(0, 2.5)
+            nx = max(0, min(_VW, self.x + dx))
+            ny = max(0, min(_VH, self.y + dy))
+            await page.mouse.move(nx, ny)
+            self.x, self.y = nx, ny
+            await asyncio.sleep(random.uniform(0.04, 0.12))
+
+    # ------------------------------------------------------------------
+    # Клик по элементу
+    # ------------------------------------------------------------------
+
+    async def click(self, page, locator) -> None:
+        """
+        Плавно подводит курсор к элементу и кликает.
+        Целится не точно в центр — немного случайно, как человек.
+        """
+        await locator.scroll_into_view_if_needed()
+        await asyncio.sleep(random.uniform(0.1, 0.3))
+
+        box = await locator.bounding_box()
+        if box:
+            cx = box["x"] + box["width"]  * random.uniform(0.3, 0.7)
+            cy = box["y"] + box["height"] * random.uniform(0.3, 0.7)
+            await self.move_to(page, cx, cy)
+        else:
+            await locator.hover()
+
+        # Небольшая пауза перед кликом — «рука навела, чуть подождала»
+        await asyncio.sleep(random.uniform(0.06, 0.22))
+        await page.mouse.click(self.x, self.y)
+
+
+# ---------------------------------------------------------------------------
+# Human typing — посимвольный ввод с ошибками и паузами
+# ---------------------------------------------------------------------------
+
+async def _human_type(page, text: str) -> None:
+    """
+    Вводит текст посимвольно с реалистичными задержками:
+    - Случайная скорость каждого символа
+    - Иногда делает опечатку и стирает
+    - Иногда делает паузы как будто думает
+    """
+    i = 0
+    while i < len(text):
+        ch = text[i]
+
+        # ~4% шанс опечатки (только для букв, не для спецсимволов)
+        if ch.isalpha() and random.random() < 0.04:
+            wrong = random.choice("qwertyuiopasdfghjklzxcvbnm")
+            await page.keyboard.type(wrong, delay=random.randint(40, 100))
+            await asyncio.sleep(random.uniform(0.08, 0.25))
+            await page.keyboard.press("Backspace")
+            await asyncio.sleep(random.uniform(0.06, 0.18))
+
+        await page.keyboard.type(ch, delay=random.randint(35, 140))
+
+        # Иногда пауза после знаков препинания — человек «думает»
+        if ch in ".!?,":
+            await asyncio.sleep(random.uniform(0.2, 0.7))
+        elif ch == " " and random.random() < 0.08:
+            await asyncio.sleep(random.uniform(0.15, 0.5))
+
+        i += 1
+
+    # Короткая пауза после завершения набора — перечитываем
+    await asyncio.sleep(random.uniform(0.5, 1.5))
+
+
+# ---------------------------------------------------------------------------
+# BrowserPublisher
+# ---------------------------------------------------------------------------
 
 class BrowserPublisher(BasePublisher):
     """
     Публикует посты в Threads через настоящий браузер Chromium.
-
-    Использует persistent context — профиль браузера хранится на диске
-    (browser_profile/), поэтому сессия и все cookies сохраняются между
-    запусками. При первом запуске нужно залогиниться вручную.
+    Профиль хранится на диске — сессия сохраняется между запусками.
+    При первом запуске нужно залогиниться вручную.
     """
 
     def __init__(self) -> None:
         self._playwright = None
-        self._context = None  # persistent context, живёт всё время работы
-
-    # ------------------------------------------------------------------
-    # Инициализация
-    # ------------------------------------------------------------------
+        self._context = None
+        self._mouse = HumanMouse()
 
     async def initialize(self) -> None:
-        """Запускает браузер с профилем на диске и проверяет авторизацию."""
         from playwright.async_api import async_playwright
         from app.config import settings
 
@@ -85,10 +271,9 @@ class BrowserPublisher(BasePublisher):
             str(profile_dir),
             headless=settings.browser_headless,
             user_agent=_USER_AGENT,
-            viewport={"width": 1366, "height": 768},
+            viewport={"width": _VW, "height": _VH},
             locale="ru-RU",
             timezone_id="Europe/Moscow",
-            # Отключаем флаги автоматизации
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-automation",
@@ -101,40 +286,30 @@ class BrowserPublisher(BasePublisher):
             ignore_default_args=["--enable-automation", "--enable-blink-features=IdleDetection"],
         )
 
-        # Патчим каждую новую страницу до загрузки скриптов сайта
         await self._context.add_init_script(_STEALTH_PATCHES)
 
-        # Проверяем авторизацию
         page = await self._context.new_page()
         await page.goto("https://www.threads.net", wait_until="domcontentloaded")
-        await _sleep(2, 4)
+        await asyncio.sleep(random.uniform(2, 4))
 
-        logged_in = await self._check_logged_in(page)
-        if not logged_in:
+        if not await self._is_logged_in(page):
             logger.info(
                 "Не авторизован — ждём ручного логина %d сек...",
                 settings.browser_login_timeout,
             )
             await asyncio.sleep(settings.browser_login_timeout)
-            logged_in = await self._check_logged_in(page)
-            if not logged_in:
+            if not await self._is_logged_in(page):
                 logger.warning("Авторизация не обнаружена после таймаута")
 
         await page.close()
 
-    async def _check_logged_in(self, page) -> bool:
-        """Проверяет наличие кнопки создания поста — признак авторизации."""
+    async def _is_logged_in(self, page) -> bool:
         try:
-            await page.wait_for_selector(
-                _compose_selector(),
-                timeout=6_000,
-            )
+            await page.wait_for_selector(_compose_sel(), timeout=6_000)
             return True
         except Exception:
             return False
 
-    # ------------------------------------------------------------------
-    # Публикация
     # ------------------------------------------------------------------
 
     async def publish(
@@ -154,59 +329,61 @@ class BrowserPublisher(BasePublisher):
     async def _do_publish(self, text: str, hashtags: Optional[list[str]]) -> PublishResult:
         post_text = self._format_post_text(text, hashtags)
         page = await self._context.new_page()
+        mouse = self._mouse
 
         try:
             # 1. Открываем главную
             logger.info("Открываем Threads")
             await page.goto("https://www.threads.net", wait_until="domcontentloaded")
-            await _sleep(2, 4)
+            await asyncio.sleep(random.uniform(1.5, 3))
 
-            # Немного скроллим — как будто читаем ленту
-            await page.mouse.wheel(0, random.randint(150, 400))
-            await _sleep(1, 2)
-            await page.mouse.wheel(0, -random.randint(50, 150))
-            await _sleep(0.5, 1.5)
+            # 2. Имитируем чтение ленты — курсор блуждает 3–6 секунд
+            logger.info("Читаем ленту...")
+            await mouse.wander(page, random.uniform(3, 6))
 
-            # 2. Кликаем кнопку создания поста
+            # Скроллим ленту немного вниз и обратно
+            await page.mouse.wheel(0, random.randint(200, 500))
+            await asyncio.sleep(random.uniform(1, 2.5))
+            await page.mouse.wheel(0, -random.randint(100, 250))
+            await asyncio.sleep(random.uniform(0.8, 2))
+
+            # 3. Находим и кликаем кнопку создания поста
             logger.info("Нажимаем кнопку нового поста")
-            compose = page.locator(_compose_selector()).first
-            await _human_click(compose)
-            await _sleep(1.5, 3)
+            compose = page.locator(_compose_sel()).first
+            await mouse.click(page, compose)
+            await asyncio.sleep(random.uniform(1.2, 2.5))
 
-            # 3. Вводим текст по символам
+            # 4. Находим текстовое поле
             logger.info("Вводим текст поста")
             editor = page.locator(
                 'div[contenteditable="true"][role="textbox"], '
                 'div[contenteditable="true"], '
-                '[placeholder], '
                 'textarea'
             ).first
             await editor.scroll_into_view_if_needed()
-            await _sleep(0.3, 0.8)
-            await editor.hover()
-            await _sleep(0.2, 0.5)
-            await editor.click()
-            await _sleep(0.3, 0.7)
+            await mouse.click(page, editor)
+            await asyncio.sleep(random.uniform(0.3, 0.7))
 
-            # Печатаем как человек: случайная задержка между символами
-            await page.keyboard.type(post_text, delay=random.randint(50, 130))
-            await _sleep(1, 2.5)
+            # 5. Печатаем текст по-человечески (с опечатками и паузами)
+            await _human_type(page, post_text)
 
-            # 4. Нажимаем «Опубликовать»
+            # Делаем паузу — как будто перечитываем написанное
+            await mouse.wander(page, random.uniform(1, 2.5))
+
+            # 6. Кликаем «Опубликовать»
             logger.info("Нажимаем Опубликовать")
-            post_btn = page.locator(_post_button_selector()).last
-            await _human_click(post_btn)
+            post_btn = page.locator(_post_btn_sel()).last
+            await mouse.click(page, post_btn)
+            await asyncio.sleep(random.uniform(2, 4))
 
-            # 5. Ждём подтверждения
-            await _sleep(2, 4)
+            # 7. Ждём подтверждения
             try:
-                # Threads показывает toast или меняет URL после публикации
                 await page.wait_for_selector(
                     '[data-pressable-container], [role="status"]',
                     timeout=8_000,
                 )
             except Exception:
-                pass  # не критично — если дошли до этой точки, пост отправлен
+                pass
 
             logger.info("Пост опубликован через браузер")
             return PublishResult(
@@ -221,8 +398,6 @@ class BrowserPublisher(BasePublisher):
             await page.close()
 
     # ------------------------------------------------------------------
-    # BasePublisher interface
-    # ------------------------------------------------------------------
 
     async def health_check(self) -> bool:
         try:
@@ -235,36 +410,21 @@ class BrowserPublisher(BasePublisher):
         return {"status": "browser_mode", "account_id": account_id}
 
 
-# ------------------------------------------------------------------
-# Вспомогательные функции
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Селекторы
+# ---------------------------------------------------------------------------
 
-def _compose_selector() -> str:
-    """Селектор кнопки создания поста (RU + EN)."""
+def _compose_sel() -> str:
     return (
-        '[aria-label*="New post"], '
-        '[aria-label*="New thread"], '
-        '[aria-label*="Новый пост"], '
-        '[aria-label*="Новая нить"]'
+        '[aria-label*="New post"], [aria-label*="New thread"], '
+        '[aria-label*="Новый пост"], [aria-label*="Новая нить"]'
     )
 
 
-def _post_button_selector() -> str:
-    """Селектор кнопки публикации (RU + EN)."""
+def _post_btn_sel() -> str:
     return (
-        '[aria-label="Post"], '
-        '[aria-label="Опубликовать"], '
+        '[aria-label="Post"], [aria-label="Опубликовать"], '
         'div[role="button"]:has-text("Post"), '
         'div[role="button"]:has-text("Опубликовать"), '
-        'button:has-text("Post"), '
-        'button:has-text("Опубликовать")'
+        'button:has-text("Post"), button:has-text("Опубликовать")'
     )
-
-
-async def _human_click(locator) -> None:
-    """Наводим курсор, делаем паузу, кликаем — имитирует поведение человека."""
-    await locator.scroll_into_view_if_needed()
-    await _sleep(0.3, 0.8)
-    await locator.hover()
-    await _sleep(0.2, 0.6)
-    await locator.click()
