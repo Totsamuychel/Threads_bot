@@ -129,10 +129,27 @@ class ThreadsAPIPublisher(BasePublisher):
                 f"Account {account_id} has no Threads user ID — complete OAuth first"
             )
         if account.token_expires_at and account.token_expires_at < datetime.now(timezone.utc):
-            raise ValueError(
-                f"Access token for account {account_id} is expired — refresh or re-authorize"
+            logger.warning(
+                "Access token for account %s may be expired (expires_at=%s) — will attempt anyway",
+                account_id, account.token_expires_at,
             )
 
+        return account.api_token, account.threads_user_id
+
+    async def _refresh_and_save(self, account_id: int) -> tuple[str, str]:
+        """Refresh the long-lived token and persist the new one to the DB."""
+        from app.models import Account
+        result = await self.db.execute(select(Account).where(Account.id == account_id))
+        account = result.scalar_one_or_none()
+        if not account or not account.api_token:
+            raise ValueError(f"Cannot refresh: account {account_id} has no token")
+
+        logger.info("Refreshing token for account %s", account_id)
+        refreshed = await self.refresh_token(account.api_token)
+        account.api_token = refreshed["access_token"]
+        account.token_expires_at = refreshed["expires_at"]
+        await self.db.commit()
+        logger.info("Token refreshed for account %s, new expiry: %s", account_id, refreshed["expires_at"])
         return account.api_token, account.threads_user_id
 
     async def _create_container(
@@ -216,38 +233,54 @@ class ThreadsAPIPublisher(BasePublisher):
         formatted_text = self._format_text(text, hashtags)
         image_url = media_urls[0] if media_urls else None
 
-        try:
-            container_id = await self._create_container(
-                user_id, access_token, formatted_text, image_url=image_url
-            )
-            logger.debug(f"Created container {container_id} for account {account_id}")
+        for attempt in range(2):
+            try:
+                container_id = await self._create_container(
+                    user_id, access_token, formatted_text, image_url=image_url
+                )
+                logger.debug("Created container %s for account %s", container_id, account_id)
 
-            data = await self._publish_container(user_id, access_token, container_id)
-            post_id = data["id"]
+                data = await self._publish_container(user_id, access_token, container_id)
+                post_id = data["id"]
 
-            permalink = await self._get_post_permalink(post_id, access_token)
+                permalink = await self._get_post_permalink(post_id, access_token)
 
-            logger.info(f"Published post {post_id} for account {account_id}")
-            return PublishResult(
-                success=True,
-                post_id=post_id,
-                post_url=permalink,
-                published_at=datetime.now(timezone.utc),
-                metadata={"container_id": container_id, "threads_user_id": user_id},
-            )
+                logger.info("Published post %s for account %s", post_id, account_id)
+                return PublishResult(
+                    success=True,
+                    post_id=post_id,
+                    post_url=permalink,
+                    published_at=datetime.now(timezone.utc),
+                    metadata={"container_id": container_id, "threads_user_id": user_id},
+                )
 
-        except httpx.HTTPStatusError as e:
-            body = e.response.text
-            logger.error(f"Threads API error for account {account_id}: {e.response.status_code} {body}")
-            return PublishResult(
-                success=False,
-                error=f"API {e.response.status_code}: {body}",
-            )
-        except httpx.TimeoutException:
-            return PublishResult(success=False, error="Request timeout")
-        except Exception as e:
-            logger.error(f"Unexpected publish error for account {account_id}: {e}")
-            return PublishResult(success=False, error=str(e))
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401 and attempt == 0 and self.db:
+                    logger.warning(
+                        "Got 401 for account %s — attempting token refresh", account_id
+                    )
+                    try:
+                        access_token, user_id = await self._refresh_and_save(account_id)
+                        continue
+                    except Exception as refresh_err:
+                        logger.error("Token refresh failed for account %s: %s", account_id, refresh_err)
+
+                body = e.response.text
+                logger.error(
+                    "Threads API error for account %s: %s %s", account_id, e.response.status_code, body
+                )
+                return PublishResult(
+                    success=False,
+                    error=f"API {e.response.status_code}: {body}",
+                )
+
+            except httpx.TimeoutException:
+                return PublishResult(success=False, error="Request timeout")
+            except Exception as e:
+                logger.error("Unexpected publish error for account %s: %s", account_id, e)
+                return PublishResult(success=False, error=str(e))
+
+        return PublishResult(success=False, error="Publish failed after token refresh")
 
     async def health_check(self) -> bool:
         """Verify the Graph API is reachable."""

@@ -61,7 +61,14 @@ class Settings(BaseSettings):
     
     # Admin
     admin_username: str = "admin"
-    admin_password: str
+    admin_password: str = ""
+    # bcrypt hash of admin password — if set, takes priority over admin_password.
+    # Generate with: python hash_password.py <password>
+    admin_password_hash: Optional[str] = None
+
+    # Telegram notifications
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     
     class Config:
         env_file = ".env"

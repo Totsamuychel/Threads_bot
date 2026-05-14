@@ -8,6 +8,7 @@ from app.database import AsyncSessionLocal
 from app.models import Account, ContentPlan, Post, ActivityLog
 from app.models.content import PostStatus
 from app.services import ContentPlanner, PostGenerator, PostPublisher
+from app.services.notifier import notifier
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -127,9 +128,18 @@ async def publish_scheduled_posts():
                     success = await publisher.publish_post(post.id)
                     if success:
                         published_count += 1
+                    else:
+                        # Fetch updated post to get error message
+                        updated = await db.execute(select(Post).where(Post.id == post.id))
+                        failed = updated.scalar_one_or_none()
+                        error_msg = failed.last_error if failed else None
+                        retry_count = failed.retry_count if failed else 0
+                        await notifier.notify_post_failed(
+                            post.account_id, post.id, error_msg, retry_count
+                        )
                 except Exception as e:
                     logger.error(f"Error publishing post {post.id}: {str(e)}")
-            
+
             logger.info(f"Publishing complete. Published {published_count}/{len(posts)} posts.")
             
         except Exception as e:
@@ -167,20 +177,27 @@ async def retry_failed_posts():
             for post in posts:
                 try:
                     delay_seconds = settings.retry_delay_seconds * (settings.retry_backoff_multiplier ** post.retry_count)
-                    
+
                     if post.updated_at:
                         time_since_update = (datetime.now(timezone.utc) - post.updated_at).total_seconds()
                         if time_since_update < delay_seconds:
                             logger.debug(f"Post {post.id} not ready for retry yet")
                             continue
-                    
+
+                    is_last_attempt = (post.retry_count + 1 >= settings.max_retries)
                     success = await publisher.retry_failed_post(post.id)
                     if success:
                         retried_count += 1
-                        
+                    elif is_last_attempt:
+                        # Max retries exhausted — fetch fresh error and alert
+                        updated = await db.execute(select(Post).where(Post.id == post.id))
+                        exhausted = updated.scalar_one_or_none()
+                        error_msg = exhausted.last_error if exhausted else None
+                        await notifier.notify_post_exhausted(post.account_id, post.id, error_msg)
+
                 except Exception as e:
                     logger.error(f"Error retrying post {post.id}: {str(e)}")
-            
+
             logger.info(f"Retry complete. Successfully retried {retried_count}/{len(posts)} posts.")
             
         except Exception as e:
