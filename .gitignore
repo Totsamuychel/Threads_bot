@@ -68,3 +68,15 @@ alembic/versions/*.py
 
 # Auto-added by script
 credentials/
+
+# Browser automation — contains session cookies, do NOT commit
+browser_profile/
+threads_cookies.json
+
+# Debug artifacts
+debug_*.png
+debug_*.txt
+debug_*.jpg
+
+# Claude Code internal
+.claude/

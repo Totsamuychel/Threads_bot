@@ -1,114 +1,113 @@
-# Статус проекта: Threads Automation
+# Threads Automation — статус проекта
 
-## Что реализовано
+## Что реализовано и работает
 
 ### Инфраструктура
-- FastAPI приложение с полной async поддержкой
-- SQLAlchemy async ORM + Alembic миграции
-- PostgreSQL (prod) / SQLite (dev) через единый интерфейс
-- Pydantic Settings — конфигурация из .env
-- APScheduler (AsyncIOScheduler) — фоновые задачи без внешнего брокера
-- Docker + docker-compose
+- FastAPI + async SQLAlchemy + Alembic миграции (SQLite dev / PostgreSQL prod)
+- Pydantic Settings — конфиг из `.env`
+- APScheduler — фоновые задачи без внешнего брокера
+- HTTP Basic Auth на всех `/api/*` маршрутах (`app/auth.py`)
+- Rate limiting 120 req/min по IP (`app/main.py`)
+- Fernet-шифрование `api_token` в БД (`app/crypto.py`, `EncryptedString`)
 
 ### Модели данных
-- `Account` — конфигурация аккаунта, расписание, tone/audience/language/hashtags
-- `ContentPlan` — план публикации с топиком и статусом
-- `Post` — сгенерированный пост с LLM-метаданными
-- `ActivityLog` — полный аудит всех событий системы
-- `Worker` — воркер-ноды для распределённого LLM-инференса
+- `Account` — аккаунт, расписание, tone/audience/language/hashtags, OAuth-поля
+- `ContentPlan` — план с топиком и статусом
+- `Post` — пост с LLM-метаданными, retry-счётчиком, ошибками
+- `ActivityLog` — аудит событий
+- `Worker` — узлы для распределённого инференса (модель есть, раздача задач — нет)
 
-### LLM слой (`app/llm/`)
-- `BaseLLMClient` — абстракция с методом `generate()`
-- `OllamaClient` — локальный Ollama сервер
-- `OpenAICompatibleClient` — OpenAI / Azure / любой совместимый API
-- `get_llm_client()` — синглтон для дефолтных настроек, новый клиент для per-account конфигов
-- `get_llm_client_for_account()` — выбирает воркер-ноду если назначена аккаунту
+### LLM слой
+- `OllamaClient` и `OpenAICompatibleClient` (любой совместимый API)
+- Per-account LLM-конфиг (`get_llm_client_for_account`)
+- Синглтон-клиент, не пересоздаётся при каждом вызове
 
-### Паблишеры (`app/publishers/`)
-- `BasePublisher` — абстракция с методами `publish()`, `health_check()`, `get_account_info()`
-- `MockPublisher` — логирует в консоль, хранит в памяти (для разработки и тестов)
-- `ThreadsAPIPublisher` — структура есть, реальная логика не реализована (см. "Не реализовано")
-
-### Сервисы (`app/services/`)
-- `ContentPlanner` — генерирует ContentPlan записи на N дней вперёд по расписанию аккаунта
-- `PostGenerator` — вызывает LLM, парсит JSON-ответ (с regex fallback для markdown-блоков), сохраняет Post
-- `PostPublisher` — оркестрирует публикацию, пишет ActivityLog, обновляет статусы
+### Сервисы
+- `ContentPlanner` — планы на N дней вперёд, CRON-расписание (`croniter`), учёт часового пояса
+- `PostGenerator` — генерация через LLM, JSON-парсинг с regex-fallback
+- `PostPublisher` — оркестрация: статусы, ActivityLog, retry-счётчик
 
 ### Планировщик (`app/scheduler/tasks.py`)
-- `generate_content_plans` — ежедневно в 1:00, параллельно по всем аккаунтам через `asyncio.gather`
-- `generate_posts_for_upcoming` — каждый час, генерирует посты за N часов до публикации
-- `publish_scheduled_posts` — каждую минуту, публикует до 10 постов за раз (`.limit(10)`)
-- `retry_failed_posts` — каждые 5 минут, exponential backoff (300s × 2^retry_count)
-- `cleanup_old_logs` — ежедневно в 3:00, удаляет логи старше 90 дней
+- `generate_content_plans` — ежедневно 01:00, параллельно по всем аккаунтам
+- `generate_posts_for_upcoming` — каждый час, за N часов до публикации
+- `publish_scheduled_posts` — каждую минуту, до 10 постов за раз
+- `retry_failed_posts` — каждые 5 минут, exponential backoff
+- `cleanup_old_logs` — ежедневно 03:00, логи старше 90 дней
+
+### Паблишеры
+- `MockPublisher` — для разработки и тестов
+- `ThreadsAPIPublisher` — полная Meta Graph API v1.0: OAuth 2.0, container → publish, refresh токена, лимит 500 символов
+- `BrowserPublisher` — Playwright с persistent profile, stealth-патчи, human-like мышь (Bezier + jitter), посимвольный ввод с опечатками
+- `VisionAgent` — Qwen VL через Ollama: скриншот → координаты элемента, fallback на CSS-селекторы
 
 ### API (`app/api/`)
-- CRUD аккаунтов: создание, редактирование, активация/деактивация
-- Контент: список планов и постов, ручной запуск генерации и публикации
-- Dashboard: статистика (success rate, pending, recent activity, upcoming posts)
-- Workers: управление воркер-нодами
-- Pages: веб-страницы для admin UI
+- CRUD аккаунтов, контентных планов, постов
+- OAuth: `/oauth/url`, `/oauth/callback`, `/oauth/refresh`, `/threads/info`
+- Workers: CRUD + heartbeat
+- Dashboard: stats, upcoming, recent, health
+- Ручной запуск: генерация плана, генерация поста, публикация, retry
 
 ### Веб-интерфейс
-- HTML шаблоны + CSS/JS в `app/templates/` и `app/static/`
-- Административный UI: просмотр постов, ручные триггеры, метрики
+- 6 HTML-шаблонов (dashboard, accounts, workers, posts, logs, base)
+- Inline JS в каждом шаблоне вызывает API через `fetch`
+- `app/static/app.js` — хелперы (api, formatTime, escapeHtml, percent)
+- Базовый функционал: просмотр данных, ручные триггеры, метрики
 
 ---
 
-## Что не реализовано / требует доработки
+## Что осталось реализовать
 
-### Критично (блокирует production)
+### Приоритет 1 — важно для стабильной работы
 
-~~**1. Реальная интеграция с Threads API**~~ ✅ реализовано  
-`app/publishers/threads_api.py` — полная реализация на Meta Graph API v1.0:
-- OAuth 2.0: генерация URL, обмен кода на short-lived → long-lived токен, refresh
-- Публикация в два шага: создание контейнера → `threads_publish`
-- Автоматическое получение credentials из БД по `account_id`
-- Поддержка текстовых и image-постов, форматирование с хэштегами (лимит 500 символов)
-- Модель `Account` расширена: `threads_user_id`, `token_expires_at`
-- Новые API эндпоинты: `GET /{id}/oauth/url`, `GET /oauth/callback`, `POST /{id}/oauth/refresh`, `GET /{id}/threads/info`
-- Миграция `002_add_threads_oauth_fields.py`
+**1. Авто-рефреш OAuth-токена при 401**
+`ThreadsAPIPublisher` падает с ошибкой если токен истёк. Нужно в `publish()` перехватывать 401, вызывать `refresh_token()`, сохранять новый токен в БД и повторять запрос.
+Файлы: `app/publishers/threads_api.py`, `app/api/accounts.py`
 
-~~**2. Небезопасные дефолты в `app/config.py`**~~ ✅ исправлено
+**2. Уведомления об ошибках**
+Сейчас ошибки только в логах и ActivityLog. Когда пост не публикуется N раз подряд — никто не знает. Нужен хотя бы один канал: Telegram-бот (`httpx` POST к Bot API) или webhook.
+Файлы: новый `app/services/notifier.py`, вызов из `app/scheduler/tasks.py`
 
-### Важно
-
-~~**3. CRON-расписание в ContentPlanner**~~ ✅ исправлено  
-Поддержка формата `{"cron": "0 9,18 * * 1-5"}` через библиотеку `croniter`. Разные дни могут иметь разное количество постов (например, только будни).
-
-~~**4. Аутентификация API**~~ ✅ исправлено  
-HTTP Basic Auth через `app/auth.py`, применена ко всем `/api/*` маршрутам через `dependencies=[Depends(require_auth)]` в `app/api/__init__.py`.
-
-~~**5. Rate limiting**~~ ✅ исправлено  
-In-memory middleware в `app/main.py`: 120 запросов/минуту на IP для `/api/*` маршрутов (429 при превышении).
-
-~~**6. Шифрование credentials в БД**~~ ✅ исправлено  
-`app/crypto.py` — Fernet-шифрование через SQLAlchemy `TypeDecorator` (`EncryptedString`). Поле `api_token` в модели `Account` шифруется/дешифруется прозрачно при чтении/записи. Старые незашифрованные записи возвращаются как есть.
-
-### Желательно
-
-**7. Тест-покрытие**  
-Файлы `tests/test_llm.py`, `tests/test_publisher.py`, `tests/test_scheduler.py` существуют, но покрытие минимальное. Нет интеграционных тестов с реальной БД.
-
-**8. Поддержка медиа в постах**  
-Модель `Post` и паблишер принимают `media_urls`, но реальная загрузка не реализована ни в одном паблишере.
-
-**9. Multi-user RBAC**  
-Система рассчитана на одного admin-пользователя. Поддержка ролей и нескольких пользователей не реализована.
-
-**10. Горизонтальное масштабирование**  
-Redis как кэш и брокер упоминается в архитектурной документации для multi-instance деплоя, не реализовано.
+**3. Хэширование пароля администратора**
+В `app/auth.py` `secrets.compare_digest` сравнивает plaintext. Нужно хранить bcrypt-хеш в `.env` и при старте проверять через `passlib`.
+Файлы: `app/auth.py`, `app/config.py`
 
 ---
 
-## Уже исправленные проблемы
+### Приоритет 2 — расширение функциональности
 
-- ✅ JSON парсинг через regex с поддержкой markdown code blocks (`post_generator.py:164`)
-- ✅ Timezone-aware datetime в retry логике (`datetime.now(timezone.utc)` в моделях и tasks.py)
-- ✅ `ActivityLog` импортируется на уровне модуля, не внутри функции
-- ✅ Параллельная обработка аккаунтов через `asyncio.gather` в `generate_content_plans`
-- ✅ Лимит 10 постов за один запуск публикатора (`.limit(10)` в `publish_scheduled_posts`)
-- ✅ LLM клиент — синглтон, не создаётся заново при каждом вызове `PostGenerator`
-- ✅ CRON-расписание в `ContentPlanner` (`croniter`, формат `{"cron": "..."}`)
-- ✅ HTTP Basic Auth на всех `/api/*` маршрутах (`app/auth.py`)
-- ✅ Rate limiting: 120 req/min на IP для `/api/*` (middleware в `app/main.py`)
-- ✅ Шифрование `api_token` в БД — Fernet через `EncryptedString` TypeDecorator (`app/crypto.py`)
+**4. Публикация с изображениями**
+Модель `Post` и все паблишеры принимают `media_urls`, но картинки не прикрепляются.
+- `ThreadsAPIPublisher`: добавить `image_url` в контейнер (`media_type=IMAGE`)
+- `BrowserPublisher`: VisionAgent найдёт кнопку прикрепления файла, загрузить через `page.set_input_files`
+Файлы: `app/publishers/threads_api.py`, `app/publishers/browser_publisher.py`
+
+**5. Docker-окружение**
+`Dockerfile` + `docker-compose.yml` (app + PostgreSQL + Ollama). Сейчас деплой только вручную.
+
+**6. Улучшения веб-интерфейса**
+- Формы создания/редактирования аккаунта (сейчас нет модальных окон, только GET-запросы)
+- Кнопка ручного старта каждого scheduler-джоба
+- Предпросмотр сгенерированного поста перед публикацией
+- Автообновление dashboard каждые 30 сек (`setInterval`)
+
+---
+
+### Приоритет 3 — желательно, но не срочно
+
+**7. Базовые интеграционные тесты**
+`tests/` почти пустые. Нужны тесты для:
+- `ContentPlanner._parse_schedule` (CRON и fixed times)
+- `PostGenerator` с mock LLM
+- `ThreadsAPIPublisher` с mock httpx
+- Один end-to-end тест scheduler → generator → publisher через MockPublisher
+
+**8. Поддержка нескольких языков в LLM-промпте**
+Поле `language` в Account есть, но в системный промпт `PostGenerator` не подставляется.
+Файл: `app/services/post_generator.py`, метод `_build_system_prompt`
+
+**9. Страница просмотра одного поста**
+`GET /posts/{id}` в API есть, но в UI нет страницы с полным текстом, промптами и метаданными генерации.
+
+**10. Распределённые воркеры**
+Модель `Worker` и heartbeat-эндпоинт есть, но `get_llm_client_for_account` не проверяет is_online и не балансирует нагрузку. Если нужен реальный multi-GPU деплой — доделать логику выбора воркера.
+Файл: `app/llm/__init__.py`, `get_llm_client_for_account`

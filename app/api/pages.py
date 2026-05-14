@@ -9,24 +9,24 @@ templates = Jinja2Templates(directory="app/templates")
 
 @router.get("/")
 async def dashboard_page(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request, "active": "dashboard"})
+    return templates.TemplateResponse(request=request, name="dashboard.html", context={"active": "dashboard"})
 
 
 @router.get("/accounts")
 async def accounts_page(request: Request):
-    return templates.TemplateResponse("accounts.html", {"request": request, "active": "accounts"})
+    return templates.TemplateResponse(request=request, name="accounts.html", context={"active": "accounts"})
 
 
 @router.get("/workers")
 async def workers_page(request: Request):
-    return templates.TemplateResponse("workers.html", {"request": request, "active": "workers"})
+    return templates.TemplateResponse(request=request, name="workers.html", context={"active": "workers"})
 
 
 @router.get("/posts")
 async def posts_page(request: Request):
-    return templates.TemplateResponse("posts.html", {"request": request, "active": "posts"})
+    return templates.TemplateResponse(request=request, name="posts.html", context={"active": "posts"})
 
 
 @router.get("/logs")
 async def logs_page(request: Request):
-    return templates.TemplateResponse("logs.html", {"request": request, "active": "logs"})
+    return templates.TemplateResponse(request=request, name="logs.html", context={"active": "logs"})
