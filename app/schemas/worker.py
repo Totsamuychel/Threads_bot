@@ -34,6 +34,12 @@ class WorkerHeartbeat(BaseModel):
     models_available: List[str] = Field(default_factory=list)
 
 
+class WorkerHeartbeatResponse(BaseModel):
+    """Response sent back to worker after heartbeat — includes pull instructions."""
+    status: str = "ok"
+    required_models: List[str] = Field(default_factory=list)
+
+
 class WorkerResponse(BaseModel):
     """Schema for worker response."""
     id: int
@@ -52,8 +58,9 @@ class WorkerResponse(BaseModel):
     is_online: bool = False
     last_heartbeat: Optional[datetime] = None
     models_available: Optional[List[str]] = None
+    required_models: Optional[List[str]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True

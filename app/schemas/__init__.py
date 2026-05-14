@@ -3,11 +3,11 @@
 from app.schemas.account import AccountCreate, AccountUpdate, AccountResponse
 from app.schemas.content import ContentPlanResponse, PostResponse, PostCreate
 from app.schemas.response import SuccessResponse, ErrorResponse
-from app.schemas.worker import WorkerCreate, WorkerUpdate, WorkerResponse, WorkerHeartbeat
+from app.schemas.worker import WorkerCreate, WorkerUpdate, WorkerResponse, WorkerHeartbeat, WorkerHeartbeatResponse
 
 __all__ = [
     "AccountCreate", "AccountUpdate", "AccountResponse",
     "ContentPlanResponse", "PostResponse", "PostCreate",
     "SuccessResponse", "ErrorResponse",
-    "WorkerCreate", "WorkerUpdate", "WorkerResponse", "WorkerHeartbeat"
+    "WorkerCreate", "WorkerUpdate", "WorkerResponse", "WorkerHeartbeat", "WorkerHeartbeatResponse"
 ]

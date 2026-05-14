@@ -34,7 +34,8 @@ class Worker(Base):
     # Status
     is_online = Column(Boolean, default=False)
     last_heartbeat = Column(DateTime)
-    models_available = Column(JSON, default=list)  # ["llama3.2", "mistral", ...]
+    models_available = Column(JSON, default=list)   # reported by worker
+    required_models = Column(JSON, default=list)    # set by admin, worker will pull these
     
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)

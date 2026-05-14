@@ -1,123 +1,255 @@
 {% extends "base.html" %}
 {% block title %}Workers{% endblock %}
 {% block page_title %}Workers{% endblock %}
-{% block actions %}<button class="btn btn-primary" onclick="showAddWorker()" id="btn-add-worker">+ Add Worker</button>{% endblock %}
+{% block actions %}
+<button class="btn btn-secondary" onclick="showDownloadInfo()">⬇ Download App</button>
+<button class="btn btn-primary" onclick="showAddWorker()">+ Add Worker</button>
+{% endblock %}
 
 {% block content %}
-<div class="info-banner">
-    <strong>💡 To connect a remote PC:</strong> Run on the remote machine:<br>
-    <code>python scripts/worker_agent.py --server http://THIS_SERVER:8000 --name my-gpu-pc</code>
-</div>
-
 <div id="workers-list" class="workers-grid">
-    <p class="empty-state">Loading...</p>
+    <p class="empty-state">Loading…</p>
 </div>
 
+<!-- Download info modal -->
+<div class="modal-overlay" id="download-modal" style="display:none">
+    <div class="modal" style="max-width:560px">
+        <h3>Connect a Worker PC</h3>
+        <p style="color:var(--text-muted);margin-bottom:12px">
+            Download the <strong>Threads Worker</strong> app and run it on any PC in your network.
+            The app will auto-install Ollama, pull required models, and stay connected.
+        </p>
+        <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;margin-bottom:16px">
+            <strong>Server URL to enter in the app:</strong><br>
+            <code id="server-url-display" style="color:#7c8cf8;font-size:13px">http://&lt;this-server-ip&gt;:8000</code>
+        </div>
+        <p style="color:var(--text-muted);font-size:13px">
+            Or run the CLI script on the remote machine:<br>
+            <code>python scripts/worker_agent.py --server http://SERVER:8000 --name my-gpu-pc</code>
+        </p>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeModal('download-modal')">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add worker modal -->
 <div class="modal-overlay" id="worker-modal" style="display:none">
     <div class="modal modal-sm">
-        <h3>Add Worker Manually</h3>
+        <h3 id="worker-modal-title">Add Worker Manually</h3>
         <form id="worker-form" onsubmit="saveWorker(event)">
+            <input type="hidden" id="w-id">
             <div class="form-group"><label>Name *</label><input type="text" id="w-name" required></div>
-            <div class="form-group"><label>Host (IP) *</label><input type="text" id="w-host" required></div>
+            <div class="form-group"><label>Host / IP *</label><input type="text" id="w-host" required placeholder="192.168.1.50"></div>
             <div class="form-group"><label>Port</label><input type="number" id="w-port" value="11434"></div>
-            <div class="form-group"><label>API Type</label><select id="w-api_type"><option>ollama</option><option>openai</option></select></div>
+            <div class="form-group"><label>API Type</label>
+                <select id="w-api_type"><option value="ollama">ollama</option><option value="openai">openai</option></select>
+            </div>
+            <div class="form-group">
+                <label>Required models <span style="color:var(--text-muted);font-weight:400">(worker will auto-pull these)</span></label>
+                <input type="text" id="w-required_models" placeholder="llama3.2, qwen2.5vl:7b">
+                <small style="color:var(--text-muted)">Comma-separated model names</small>
+            </div>
             <div class="modal-actions">
-                <button type="button" class="btn btn-secondary" onclick="closeWorkerModal()">Cancel</button>
-                <button type="submit" class="btn btn-primary">Add</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('worker-modal')">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="w-submit-btn">Add</button>
             </div>
         </form>
     </div>
 </div>
+
+<style>
+.workers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+.worker-card-lg { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; transition: border-color .2s; }
+.worker-card-lg.online { border-color: #2ecc7140; }
+.worker-card-lg.offline { opacity: .75; }
+.worker-card-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+.worker-card-header .title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.worker-info { display:flex; flex-wrap:wrap; gap:8px; color:var(--text-muted); font-size:13px; margin-bottom:10px; }
+.resource-section { margin-bottom:8px; }
+.resource-bar-lg { display:flex; flex-direction:column; gap:4px; }
+.bar-header { display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); }
+.bar-lg { height:6px; background:var(--bg-secondary); border-radius:3px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:3px; transition:width .4s; }
+.bar-green { background:#2ecc71; } .bar-yellow { background:#f0a500; } .bar-red { background:#e74c3c; }
+.worker-models-section { margin-top:10px; font-size:13px; }
+.worker-models-section .label { color:var(--text-muted); margin-bottom:6px; }
+.tag-model { background:#2d2d4e; color:#7c8cf8; font-size:11px; padding:2px 7px; border-radius:10px; display:inline-block; margin:2px; }
+.tag-pending { background:#3d2a00; color:#f0a500; }
+.worker-accounts { margin-top:10px; font-size:13px; border-top:1px solid var(--border); padding-top:10px; }
+.account-chip { background:var(--bg-secondary); border-radius:6px; padding:3px 8px; font-size:12px; display:inline-block; margin:2px; }
+.worker-actions { display:flex; gap:8px; margin-top:12px; }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
+let allAccounts = [];
+
 async function loadWorkers() {
     try {
-        const workers = await api('/api/workers');
+        const [workers, accounts] = await Promise.all([api('/api/workers'), api('/api/accounts')]);
+        allAccounts = accounts;
         const el = document.getElementById('workers-list');
-        
-        if (workers.length === 0) {
-            el.innerHTML = '<p class="empty-state">No workers registered. Use the worker agent or add manually.</p>';
+
+        if (!workers.length) {
+            el.innerHTML = '<p class="empty-state">No workers connected. Use the download button to get the Worker app.</p>';
             return;
         }
-        
-        el.innerHTML = workers.map(w => `
+
+        const accountsByWorker = {};
+        accounts.forEach(a => {
+            if (a.llm_worker_id) {
+                (accountsByWorker[a.llm_worker_id] = accountsByWorker[a.llm_worker_id] || []).push(a);
+            }
+        });
+
+        el.innerHTML = workers.map(w => {
+            const workerAccounts = accountsByWorker[w.id] || [];
+            const required = w.required_models || [];
+            const available = new Set(w.models_available || []);
+            const missing = required.filter(m => !available.has(m));
+
+            return `
             <div class="worker-card-lg ${w.is_online ? 'online' : 'offline'}">
                 <div class="worker-card-header">
-                    <div>
+                    <div class="title">
                         <span class="status-dot ${w.is_online ? 'dot-online' : 'dot-offline'}"></span>
                         <strong>${escapeHtml(w.name)}</strong>
                         <span class="badge badge-${w.is_online ? 'posted' : 'failed'}">${w.is_online ? 'ONLINE' : 'OFFLINE'}</span>
+                        <span style="color:var(--text-muted);font-size:12px">${w.api_type}</span>
                     </div>
-                    <button class="btn btn-sm btn-danger" onclick="deleteWorker(${w.id})">✕</button>
+                    <div style="display:flex;gap:6px">
+                        <button class="btn btn-sm btn-secondary" onclick="editWorker(${w.id})">Edit</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteWorker(${w.id})">✕</button>
+                    </div>
                 </div>
+
                 <div class="worker-info">
-                    <span>📍 ${w.host}:${w.port}</span>
-                    <span>🔌 ${w.api_type}</span>
-                    ${w.gpu_name ? `<span>🎮 ${w.gpu_name}</span>` : ''}
-                    ${w.last_heartbeat ? `<span>♥ ${formatTime(w.last_heartbeat)}</span>` : ''}
+                    <span>📍 ${escapeHtml(w.host)}:${w.port}</span>
+                    ${w.gpu_name ? `<span>🎮 ${escapeHtml(w.gpu_name)}</span>` : ''}
+                    ${w.last_heartbeat ? `<span title="${w.last_heartbeat}">♥ ${formatTime(w.last_heartbeat)}</span>` : '<span>No heartbeat yet</span>'}
                 </div>
-                
+
                 ${w.vram_total_mb ? `
                 <div class="resource-section">
                     <div class="resource-bar-lg">
-                        <div class="bar-header"><span>🎮 VRAM</span><span>${w.vram_used_mb || 0} / ${w.vram_total_mb} MB (${percent(w.vram_used_mb, w.vram_total_mb)}%)</span></div>
-                        <div class="bar bar-lg"><div class="bar-fill ${getBarColor(w.vram_used_mb, w.vram_total_mb)}" style="width: ${percent(w.vram_used_mb, w.vram_total_mb)}%"></div></div>
+                        <div class="bar-header"><span>🎮 VRAM</span><span>${w.vram_used_mb||0} / ${w.vram_total_mb} MB (${pct(w.vram_used_mb,w.vram_total_mb)}%)</span></div>
+                        <div class="bar-lg"><div class="bar-fill ${barColor(w.vram_used_mb,w.vram_total_mb)}" style="width:${pct(w.vram_used_mb,w.vram_total_mb)}%"></div></div>
                     </div>
                 </div>` : ''}
-                
+
                 ${w.ram_total_mb ? `
                 <div class="resource-section">
                     <div class="resource-bar-lg">
-                        <div class="bar-header"><span>💾 RAM</span><span>${w.ram_used_mb || 0} / ${w.ram_total_mb} MB (${percent(w.ram_used_mb, w.ram_total_mb)}%)</span></div>
-                        <div class="bar bar-lg"><div class="bar-fill ${getBarColor(w.ram_used_mb, w.ram_total_mb)}" style="width: ${percent(w.ram_used_mb, w.ram_total_mb)}%"></div></div>
+                        <div class="bar-header"><span>💾 RAM</span><span>${w.ram_used_mb||0} / ${w.ram_total_mb} MB (${pct(w.ram_used_mb,w.ram_total_mb)}%)</span></div>
+                        <div class="bar-lg"><div class="bar-fill ${barColor(w.ram_used_mb,w.ram_total_mb)}" style="width:${pct(w.ram_used_mb,w.ram_total_mb)}%"></div></div>
                     </div>
                 </div>` : ''}
-                
-                ${w.cpu_percent !== null && w.cpu_percent !== undefined ? `
+
+                ${w.cpu_percent != null ? `
                 <div class="resource-section">
                     <div class="resource-bar-lg">
                         <div class="bar-header"><span>⚡ CPU</span><span>${w.cpu_percent}%</span></div>
-                        <div class="bar bar-lg"><div class="bar-fill ${w.cpu_percent > 80 ? 'bar-red' : w.cpu_percent > 50 ? 'bar-yellow' : 'bar-green'}" style="width: ${w.cpu_percent}%"></div></div>
+                        <div class="bar-lg"><div class="bar-fill ${w.cpu_percent>80?'bar-red':w.cpu_percent>50?'bar-yellow':'bar-green'}" style="width:${w.cpu_percent}%"></div></div>
                     </div>
                 </div>` : ''}
-                
+
                 <div class="worker-models-section">
-                    <strong>Models:</strong>
-                    ${(w.models_available || []).length > 0
-                        ? (w.models_available || []).map(m => `<span class="tag tag-model">${m}</span>`).join('')
-                        : '<em>none loaded</em>'
-                    }
+                    <div class="label">Models available (${(w.models_available||[]).length}):</div>
+                    ${(w.models_available||[]).length
+                        ? (w.models_available||[]).map(m=>`<span class="tag-model">${escapeHtml(m)}</span>`).join('')
+                        : '<em style="color:var(--text-muted)">none</em>'}
+                    ${missing.length ? `<div style="margin-top:6px"><span style="color:#f0a500;font-size:12px">⬇ Pending pull:</span> ${missing.map(m=>`<span class="tag-model tag-pending">${escapeHtml(m)}</span>`).join('')}</div>` : ''}
                 </div>
-            </div>
-        `).join('');
-    } catch (e) {
-        console.error(e);
-    }
+
+                <div class="worker-accounts">
+                    <div class="label">Assigned accounts (${workerAccounts.length}):</div>
+                    ${workerAccounts.length
+                        ? workerAccounts.map(a=>`<span class="account-chip">@${escapeHtml(a.username)}</span>`).join('')
+                        : '<em style="color:var(--text-muted)">none — assign via Accounts page</em>'}
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { console.error(e); }
 }
 
+function pct(used, total) {
+    if (!total) return 0;
+    return Math.round((used||0) / total * 100);
+}
+function barColor(used, total) {
+    const p = pct(used, total);
+    return p > 80 ? 'bar-red' : p > 50 ? 'bar-yellow' : 'bar-green';
+}
+
+function showDownloadInfo() {
+    const el = document.getElementById('server-url-display');
+    el.textContent = `http://${window.location.hostname}:${window.location.port || 8000}`;
+    document.getElementById('download-modal').style.display = 'flex';
+}
+function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
 function showAddWorker() {
+    document.getElementById('worker-modal-title').textContent = 'Add Worker Manually';
+    document.getElementById('w-submit-btn').textContent = 'Add';
+    document.getElementById('w-id').value = '';
+    document.getElementById('w-name').value = '';
+    document.getElementById('w-host').value = '';
+    document.getElementById('w-port').value = '11434';
+    document.getElementById('w-api_type').value = 'ollama';
+    document.getElementById('w-required_models').value = '';
     document.getElementById('worker-modal').style.display = 'flex';
 }
-function closeWorkerModal() {
-    document.getElementById('worker-modal').style.display = 'none';
+
+async function editWorker(id) {
+    const w = await api(`/api/workers/${id}`);
+    document.getElementById('worker-modal-title').textContent = 'Edit Worker';
+    document.getElementById('w-submit-btn').textContent = 'Save';
+    document.getElementById('w-id').value = w.id;
+    document.getElementById('w-name').value = w.name;
+    document.getElementById('w-host').value = w.host;
+    document.getElementById('w-port').value = w.port;
+    document.getElementById('w-api_type').value = w.api_type;
+    document.getElementById('w-required_models').value = (w.required_models || []).join(', ');
+    document.getElementById('worker-modal').style.display = 'flex';
 }
 
 async function saveWorker(e) {
     e.preventDefault();
-    await api('/api/workers', 'POST', {
-        name: document.getElementById('w-name').value,
-        host: document.getElementById('w-host').value,
-        port: parseInt(document.getElementById('w-port').value),
-        api_type: document.getElementById('w-api_type').value
-    });
-    closeWorkerModal();
+    const id = document.getElementById('w-id').value;
+    const rawModels = document.getElementById('w-required_models').value.trim();
+    const requiredModels = rawModels ? rawModels.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+    if (id) {
+        // Update existing
+        await api(`/api/workers/${id}`, 'PUT', {
+            name: document.getElementById('w-name').value,
+            host: document.getElementById('w-host').value,
+            port: parseInt(document.getElementById('w-port').value),
+            api_type: document.getElementById('w-api_type').value,
+        });
+        if (requiredModels.length || rawModels === '') {
+            await api(`/api/workers/${id}/required-models`, 'PUT', requiredModels);
+        }
+    } else {
+        // Create new
+        const w = await api('/api/workers', 'POST', {
+            name: document.getElementById('w-name').value,
+            host: document.getElementById('w-host').value,
+            port: parseInt(document.getElementById('w-port').value),
+            api_type: document.getElementById('w-api_type').value,
+        });
+        if (requiredModels.length) {
+            await api(`/api/workers/${w.id}/required-models`, 'PUT', requiredModels);
+        }
+    }
+    closeModal('worker-modal');
     loadWorkers();
 }
 
 async function deleteWorker(id) {
-    if (!confirm('Remove this worker?')) return;
+    if (!confirm('Remove this worker? Assigned accounts will lose their worker.')) return;
     await api(`/api/workers/${id}`, 'DELETE');
     loadWorkers();
 }

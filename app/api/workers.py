@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
+from fastapi import Body
 from datetime import datetime, timezone
 from app.database import get_db
 from app.models import Worker
-from app.schemas import WorkerCreate, WorkerUpdate, WorkerResponse, WorkerHeartbeat, SuccessResponse
+from app.schemas import WorkerCreate, WorkerUpdate, WorkerResponse, WorkerHeartbeat, WorkerHeartbeatResponse, SuccessResponse
 
 router = APIRouter(prefix="/api/workers", tags=["workers"])
 
@@ -72,14 +73,14 @@ async def delete_worker(worker_id: int, db: AsyncSession = Depends(get_db)):
     return SuccessResponse(message=f"Worker '{worker.name}' deleted")
 
 
-@router.post("/{worker_id}/heartbeat", response_model=SuccessResponse)
+@router.post("/{worker_id}/heartbeat", response_model=WorkerHeartbeatResponse)
 async def worker_heartbeat(worker_id: int, heartbeat: WorkerHeartbeat, db: AsyncSession = Depends(get_db)):
-    """Receive heartbeat with resource metrics from a worker."""
+    """Receive heartbeat; respond with list of models the worker should pull."""
     result = await db.execute(select(Worker).where(Worker.id == worker_id))
     worker = result.scalar_one_or_none()
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
-    
+
     worker.gpu_name = heartbeat.gpu_name
     worker.vram_total_mb = heartbeat.vram_total_mb
     worker.vram_used_mb = heartbeat.vram_used_mb
@@ -91,9 +92,27 @@ async def worker_heartbeat(worker_id: int, heartbeat: WorkerHeartbeat, db: Async
     worker.models_available = heartbeat.models_available
     worker.is_online = True
     worker.last_heartbeat = datetime.now(timezone.utc)
-    
+
     await db.commit()
-    return SuccessResponse(message="Heartbeat received")
+
+    # Tell worker which models to pull (ones not yet available)
+    required = worker.required_models or []
+    available = set(heartbeat.models_available)
+    to_pull = [m for m in required if m not in available]
+    return WorkerHeartbeatResponse(required_models=to_pull)
+
+
+@router.put("/{worker_id}/required-models", response_model=WorkerResponse)
+async def set_required_models(worker_id: int, models: List[str] = Body(...), db: AsyncSession = Depends(get_db)):
+    """Set the list of models that must be available on this worker."""
+    result = await db.execute(select(Worker).where(Worker.id == worker_id))
+    worker = result.scalar_one_or_none()
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    worker.required_models = models
+    await db.commit()
+    await db.refresh(worker)
+    return worker
 
 
 @router.post("/register", response_model=WorkerResponse, status_code=201)
